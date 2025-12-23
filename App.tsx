@@ -13,7 +13,8 @@ import {
   Sparkles,
   BrainCircuit,
   Loader2,
-  RefreshCw
+  RefreshCw,
+  Zap
 } from 'lucide-react';
 import { 
   PieChart, 
@@ -37,7 +38,9 @@ import {
   addDoc, 
   updateDoc, 
   query, 
-  orderBy 
+  orderBy,
+  getDocs,
+  writeBatch
 } from 'firebase/firestore';
 import { Role, User, Machine, MaintenanceRecord, MaintenanceType } from './types';
 import { GoogleGenAI } from "@google/genai";
@@ -54,7 +57,7 @@ const IndustrialButton: React.FC<{
 }> = ({ children, onClick, variant = 'primary', className = '', fullWidth = false, disabled = false }) => {
   const baseStyles = "px-6 py-4 font-extrabold text-sm uppercase tracking-widest transition-all active:scale-95 flex items-center justify-center gap-3 rounded-2xl shadow-md disabled:opacity-50 disabled:cursor-not-allowed";
   const variants = {
-    primary: "bg-orange-600 hover:bg-orange-700 text-white shadow-orange-100",
+    primary: "bg-orange-600 hover:bg-orange-700 text-white shadow-orange-200",
     secondary: "bg-slate-800 hover:bg-slate-900 text-white shadow-slate-200",
     danger: "bg-red-600 hover:bg-red-700 text-white shadow-red-200",
     success: "bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-200",
@@ -84,46 +87,23 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [view, setView] = useState<'LOGIN' | 'DASHBOARD'>('LOGIN');
   const [loading, setLoading] = useState(true);
-  const [apiKeySelected, setApiKeySelected] = useState<boolean>(false);
-  const [showDiagnostic, setShowDiagnostic] = useState(false);
 
   useEffect(() => {
-    // 1. Timeout de seguridad para la carga inicial
-    const timer = setTimeout(() => {
-      if (loading) setShowDiagnostic(true);
-    }, 6000);
-
-    // 2. Verificar API Key de IA usando window.aistudio
-    const checkKey = async () => {
-      try {
-        if ((window as any).aistudio?.hasSelectedApiKey) {
-          const hasKey = await (window as any).aistudio.hasSelectedApiKey();
-          setApiKeySelected(hasKey);
-        } else {
-          setApiKeySelected(true);
-        }
-      } catch (e) {
-        setApiKeySelected(true);
-      }
-    };
-    checkKey();
-
-    // 3. Suscripciones Firebase
+    // 1. Suscripciones Firebase con manejo de errores
     const unsubUsers = onSnapshot(collection(db, 'users'), (snapshot) => {
       const data = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as User));
       setUsers(data);
       setLoading(false);
-      setShowDiagnostic(false);
     }, (err) => {
       console.error("Error Firebase Users:", err);
       setLoading(false);
     });
 
-    onSnapshot(collection(db, 'machines'), (snapshot) => {
+    const unsubMachines = onSnapshot(collection(db, 'machines'), (snapshot) => {
       setMachines(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Machine)));
     });
 
-    onSnapshot(query(collection(db, 'records'), orderBy('date', 'desc')), (snapshot) => {
+    const unsubRecords = onSnapshot(query(collection(db, 'records'), orderBy('date', 'desc')), (snapshot) => {
       setRecords(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as MaintenanceRecord)));
     });
 
@@ -133,8 +113,49 @@ export default function App() {
       setView('DASHBOARD');
     }
 
-    return () => { clearTimeout(timer); unsubUsers(); };
+    return () => { unsubUsers(); unsubMachines(); unsubRecords(); };
   }, []);
+
+  // Función para poblar la base de datos si está vacía
+  const seedDatabase = async () => {
+    try {
+      const batch = writeBatch(db);
+      
+      // Crear Usuarios
+      const usersRef = collection(db, 'users');
+      const operatorRef = doc(usersRef);
+      const leaderRef = doc(usersRef);
+      const managerRef = doc(usersRef);
+
+      batch.set(operatorRef, { name: "Juan Pérez", role: Role.OPERATOR });
+      batch.set(leaderRef, { name: "Ing. García", role: Role.LEADER });
+      batch.set(managerRef, { name: "Director Técnico", role: Role.MANAGER });
+
+      // Crear Máquinas
+      const machinesRef = collection(db, 'machines');
+      const machine1 = doc(machinesRef);
+      const machine2 = doc(machinesRef);
+
+      batch.set(machine1, { 
+        name: "Prensa Hidráulica 01", 
+        assignedTo: operatorRef.id, 
+        lastMaintenance: new Date().toISOString(), 
+        intervalDays: 7 
+      });
+      batch.set(machine2, { 
+        name: "Torno CNC-V2", 
+        assignedTo: operatorRef.id, 
+        lastMaintenance: new Date().toISOString(), 
+        intervalDays: 15 
+      });
+
+      await batch.commit();
+      alert("Base de datos inicializada. Ya puedes elegir un usuario.");
+    } catch (error) {
+      console.error("Error seeding:", error);
+      alert("Error al inicializar. Revisa las reglas de Firestore.");
+    }
+  };
 
   const handleLogin = (userId: string) => {
     const user = users.find(u => u.id === userId);
@@ -151,59 +172,11 @@ export default function App() {
     setView('LOGIN');
   };
 
-  const handleOpenKeyDialog = async () => {
-    if ((window as any).aistudio?.openSelectKey) {
-      await (window as any).aistudio.openSelectKey();
-    }
-    // Asumir éxito tras llamar al diálogo para evitar race conditions
-    setApiKeySelected(true);
-  };
-
   if (loading) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-screen bg-white">
-        <Loader2 className="w-16 h-16 text-orange-600 animate-spin mb-6" />
-        <div className="text-center space-y-2">
-          <p className="text-slate-900 font-black uppercase tracking-tighter text-xl">Sincronizando Planta...</p>
-          <p className="text-slate-400 font-bold text-xs uppercase tracking-widest">Infraestructura Cloud TPM Pro</p>
-        </div>
-        {showDiagnostic && (
-          <div className="mt-12 p-8 max-w-sm bg-slate-50 rounded-[2rem] border border-slate-100 animate-in fade-in slide-in-from-bottom-4">
-            <p className="text-xs font-bold text-slate-500 mb-4 text-center">¿La carga tarda demasiado? Verifique su conexión o las variables de entorno de Firebase.</p>
-            <IndustrialButton variant="outline" fullWidth onClick={() => window.location.reload()}>
-              <RefreshCw className="w-4 h-4" /> Reintentar
-            </IndustrialButton>
-          </div>
-        )}
-      </div>
-    );
-  }
-
-  if (!apiKeySelected) {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-screen bg-slate-50 p-6">
-        <Card className="max-w-md w-full text-center space-y-8 border-indigo-100">
-          <div className="p-6 bg-indigo-600 rounded-full text-white mx-auto w-fit shadow-xl shadow-indigo-100">
-            <BrainCircuit className="w-10 h-10" />
-          </div>
-          <h2 className="text-3xl font-black text-slate-900 uppercase tracking-tighter leading-none">Activar Motor IA</h2>
-          <div className="space-y-4">
-            <p className="text-slate-500 font-bold text-sm leading-relaxed">
-              Es necesario configurar una API Key de Gemini para habilitar el análisis de riesgos y auditorías automáticas.
-            </p>
-            <a 
-              href="https://ai.google.dev/gemini-api/docs/billing" 
-              target="_blank" 
-              rel="noopener noreferrer" 
-              className="text-indigo-600 font-bold text-xs uppercase underline hover:text-indigo-800 transition-colors"
-            >
-              Documentación de Facturación
-            </a>
-          </div>
-          <IndustrialButton variant="ai" fullWidth onClick={handleOpenKeyDialog}>
-            Configurar Gemini Pro
-          </IndustrialButton>
-        </Card>
+      <div className="flex flex-col items-center justify-center min-h-screen bg-slate-900 text-white">
+        <Loader2 className="w-16 h-16 text-orange-500 animate-spin mb-6" />
+        <p className="text-xl font-black uppercase tracking-widest animate-pulse">Conectando a Planta Pro...</p>
       </div>
     );
   }
@@ -221,9 +194,10 @@ export default function App() {
               <p className="text-slate-400 font-black uppercase tracking-[0.3em] text-[10px]">Industrial Intelligence Platform</p>
             </div>
           </div>
-          <Card className="space-y-6">
+          
+          <Card className="space-y-8">
             <div className="space-y-3">
-              <label className="text-[10px] font-black uppercase text-slate-400 tracking-[0.2em] ml-2">Panel de Acceso</label>
+              <label className="text-[10px] font-black uppercase text-slate-400 tracking-[0.2em] ml-2">Identificación de Usuario</label>
               <select 
                 className="w-full bg-slate-50 border-2 border-slate-100 p-5 rounded-2xl text-lg font-bold outline-none focus:border-orange-500 transition-all cursor-pointer appearance-none shadow-inner" 
                 onChange={(e) => handleLogin(e.target.value)} 
@@ -233,12 +207,19 @@ export default function App() {
                 {users.length > 0 ? (
                   users.map(u => <option key={u.id} value={u.id}>{u.name} | {u.role}</option>)
                 ) : (
-                  <option disabled>No hay usuarios registrados en Firebase</option>
+                  <option disabled>Base de datos vacía</option>
                 )}
               </select>
             </div>
+
             {users.length === 0 && (
-              <p className="text-[10px] text-red-500 font-bold text-center">Aviso: La base de datos de usuarios está vacía. Configure sus datos en Firestore.</p>
+              <div className="p-6 bg-orange-50 border border-orange-100 rounded-3xl text-center space-y-4">
+                <p className="text-xs font-bold text-orange-700 uppercase">La base de datos está vacía</p>
+                <IndustrialButton variant="primary" fullWidth onClick={seedDatabase}>
+                  <Zap className="w-5 h-5" />
+                  Inicializar Planta
+                </IndustrialButton>
+              </div>
             )}
           </Card>
         </div>
@@ -265,9 +246,9 @@ export default function App() {
       </header>
 
       <main className="flex-1 p-6 md:p-12 max-w-7xl mx-auto w-full">
-        {currentUser?.role === Role.OPERATOR && <OperatorView user={currentUser} machines={machines} onResetKey={() => setApiKeySelected(false)} />}
+        {currentUser?.role === Role.OPERATOR && <OperatorView user={currentUser} machines={machines} />}
         {currentUser?.role === Role.LEADER && <LeaderView user={currentUser} machines={machines} records={records} />}
-        {currentUser?.role === Role.MANAGER && <ManagerView users={users} machines={machines} records={records} onResetKey={() => setApiKeySelected(false)} />}
+        {currentUser?.role === Role.MANAGER && <ManagerView users={users} machines={machines} records={records} />}
       </main>
     </div>
   );
@@ -275,7 +256,7 @@ export default function App() {
 
 // --- VISTAS ESPECÍFICAS ---
 
-const OperatorView: React.FC<{ user: User; machines: Machine[]; onResetKey: () => void }> = ({ user, machines, onResetKey }) => {
+const OperatorView: React.FC<{ user: User; machines: Machine[] }> = ({ user, machines }) => {
   const [selectedMachine, setSelectedMachine] = useState<Machine | null>(null);
   const [checklist, setChecklist] = useState<boolean[]>(new Array(5).fill(false));
   const [obs, setObs] = useState('');
@@ -284,21 +265,19 @@ const OperatorView: React.FC<{ user: User; machines: Machine[]; onResetKey: () =
 
   const myMachines = machines.filter(m => m.assignedTo === user.id);
 
+  // Initialize Gemini AI client for analysis using process.env.API_KEY
   const analyzeWithAI = async () => {
     if (!obs.trim()) return;
     setIsAnalyzing(true);
     try {
-      // Instanciar GoogleGenAI justo antes del uso para asegurar la API Key actual
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       const response = await ai.models.generateContent({
         model: 'gemini-3-flash-preview',
         contents: `Analiza esta observación industrial: "${obs}". Define criticidad y acción correctiva breve (15 palabras).`,
       });
-      // Acceder a .text como propiedad (no método)
       setAiAnalysis(response.text || "Análisis completado satisfactoriamente.");
     } catch (e: any) {
-      if (e?.message?.toLowerCase().includes("not found")) onResetKey();
-      else setAiAnalysis("Motor de IA no disponible temporalmente.");
+      setAiAnalysis("Motor de IA no disponible temporalmente.");
     } finally { setIsAnalyzing(false); }
   };
 
@@ -317,6 +296,7 @@ const OperatorView: React.FC<{ user: User; machines: Machine[]; onResetKey: () =
       setSelectedMachine(null);
       setObs('');
       setAiAnalysis(null);
+      setChecklist(new Array(5).fill(false));
       alert("Reporte Certificado correctamente.");
     } catch (e) {
       alert("Error de sincronización con la nube.");
@@ -375,7 +355,7 @@ const OperatorView: React.FC<{ user: User; machines: Machine[]; onResetKey: () =
   );
 };
 
-// --- VISTA LÍDER Y MANAGER SIMPLIFICADOS PARA ESTABILIDAD ---
+// --- VISTA LÍDER Y MANAGER SIMPLIFICADOS ---
 const LeaderView: React.FC<{ user: User; machines: Machine[]; records: MaintenanceRecord[] }> = ({ machines, records }) => (
   <div className="space-y-12 animate-in fade-in duration-500">
     <h2 className="text-5xl font-black text-slate-900 uppercase tracking-tighter">Alertas Activas</h2>
@@ -395,7 +375,7 @@ const LeaderView: React.FC<{ user: User; machines: Machine[]; records: Maintenan
   </div>
 );
 
-const ManagerView: React.FC<{ users: User[]; machines: Machine[]; records: MaintenanceRecord[]; onResetKey: () => void }> = ({ machines, records, onResetKey }) => {
+const ManagerView: React.FC<{ users: User[]; machines: Machine[]; records: MaintenanceRecord[] }> = ({ machines, records }) => {
   const [activePanel, setActivePanel] = useState<'KPI' | 'AI'>('KPI');
   const [aiReport, setAiReport] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -406,18 +386,16 @@ const ManagerView: React.FC<{ users: User[]; machines: Machine[]; records: Maint
     return [{ name: 'Ok', value: total - due, color: '#10b981' }, { name: 'Falla', value: due, color: '#f97316' }];
   }, [machines]);
 
+  // Executive audit using Gemini Pro initialized before call
   const getAiAudit = async () => {
     setLoading(true);
     try {
-      // Instanciar GoogleGenAI justo antes del uso
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       const prompt = `Analiza historial: ${JSON.stringify(records.slice(0, 10))}. Resume riesgos operativos en 20 palabras.`;
       const result = await ai.models.generateContent({ model: 'gemini-3-pro-preview', contents: prompt });
-      // Acceder a .text como propiedad
       setAiReport(result.text || "Reporte generado con éxito.");
     } catch (e: any) {
-      if (e?.message?.toLowerCase().includes("not found")) onResetKey();
-      else setAiReport("Error en conexión IA.");
+      setAiReport("Error en conexión IA.");
     } finally { setLoading(false); }
   };
 
