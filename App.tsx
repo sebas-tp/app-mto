@@ -14,9 +14,8 @@ import {
 } from 'date-fns';
 
 // --- FIREBASE IMPORTS ---
-// Importamos 'auth' para el login del portero
 import { db, auth } from './firebaseConfig'; 
-import { signInWithEmailAndPassword } from 'firebase/auth'; // <--- IMPORTANTE: Para el auto-login
+import { signInWithEmailAndPassword } from 'firebase/auth'; 
 import { 
   collection, doc, addDoc, updateDoc, onSnapshot, query, orderBy, setDoc
 } from 'firebase/firestore';
@@ -84,15 +83,15 @@ export default function App() {
   const [view, setView] = useState<'LOGIN' | 'DASHBOARD'>('LOGIN');
   const [showAdminLogin, setShowAdminLogin] = useState(false);
   const [adminPass, setAdminPass] = useState('');
+  
+  // NUEVO ESTADO: Para saber si estamos cargando datos iniciales
+  const [isDataLoading, setIsDataLoading] = useState(true);
 
   // --- AUTO-LOGIN DEL SISTEMA ("EL PORTERO") ---
   useEffect(() => {
     const conectarSistema = async () => {
-      // Si ya hay una sesión de Firebase activa, no intentamos loguear de nuevo
       if (auth.currentUser) return;
-
       try {
-        // Credenciales del "Usuario Portero". La app se loguea sola con esto.
         await signInWithEmailAndPassword(auth, "planta@sistema.com", "acceso_planta_2024");
         console.log("🟢 Sistema conectado a la nube (Modo Portero).");
       } catch (error) {
@@ -103,9 +102,16 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    // Escuchar USUARIOS
     const unsubUsers = onSnapshot(collection(db, "users"), (snapshot) => {
       setUsers(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as User)));
+      // IMPORTANTE: Una vez que recibimos la primera respuesta de usuarios, dejamos de cargar
+      setIsDataLoading(false);
+    }, (err) => {
+      console.error(err);
+      setIsDataLoading(false); // Si hay error, también dejamos de cargar para no bloquear la app
     });
+
     const unsubMachines = onSnapshot(collection(db, "machines"), (snapshot) => {
       setMachines(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Machine)));
     });
@@ -163,7 +169,6 @@ export default function App() {
       await setDoc(doc(db, "users", "u2"), { name: 'Pedro Líder', role: Role.LEADER, phone: '5491112345678', pin: '1234' });
       await setDoc(doc(db, "users", "u3"), { name: 'Ana Gerente', role: Role.MANAGER, phone: '5491112345678', pin: '9999' });
 
-      // CORRECCIÓN: Usamos null en lugar de undefined
       await setDoc(doc(db, "machines", "m1"), { name: 'Inyectora Plástico I-01', assignedTo: 'u1', lastMaintenance: new Date(Date.now() - 20 * 86400000).toISOString(), intervalDays: 15 });
       await setDoc(doc(db, "machines", "m2"), { name: 'Brazo Robótico R-4', assignedTo: null, lastMaintenance: new Date(Date.now() - 2 * 86400000).toISOString(), intervalDays: 15 });
       await setDoc(doc(db, "machines", "m3"), { name: 'Compresor Central C-80', assignedTo: 'u2', lastMaintenance: new Date(Date.now() - 40 * 86400000).toISOString(), intervalDays: 30 });
@@ -171,7 +176,7 @@ export default function App() {
       alert("Base de Datos Inicializada Correctamente.");
     } catch (error) {
       console.error(error);
-      alert("Error al escribir en Firebase. Verifica que el 'Usuario Portero' esté creado y las reglas permitan escribir.");
+      alert("Error al escribir en Firebase. Revisa las reglas de seguridad o la consola.");
     }
   };
 
@@ -209,20 +214,42 @@ export default function App() {
             <p className="text-slate-400 font-bold uppercase tracking-[0.2em] text-[10px]">Portal de Acceso Industrial</p>
           </div>
           
-          <div className="bg-white p-10 rounded-[3rem] shadow-2xl border border-slate-50 space-y-8 relative">
-            <div className="space-y-2">
-              <label className="text-[10px] font-black uppercase text-slate-400 ml-2">Personal de Planta</label>
-              <select className="w-full bg-slate-50 border-2 border-slate-100 p-5 rounded-2xl text-lg font-bold outline-none appearance-none cursor-pointer focus:border-orange-500 transition-all" onChange={(e) => handleLogin(e.target.value)} value="">
-                <option value="" disabled>-- Seleccione su Identidad --</option>
-                {publicUsers.map(u => <option key={u.id} value={u.id}>{u.name} | {getRoleDisplayName(u.role)}</option>)}
-              </select>
-            </div>
-            {users.length === 0 && (<IndustrialButton fullWidth variant="secondary" onClick={seedDB}>Inicializar Base de Datos Nube</IndustrialButton>)}
-            <div className="pt-4 border-t border-slate-100 flex justify-center">
-              <button onClick={() => setShowAdminLogin(true)} className="flex items-center gap-2 text-[10px] font-black uppercase text-slate-300 hover:text-orange-600 transition-colors tracking-widest">
-                <Lock className="w-3 h-3" /> Acceso Gerencial
-              </button>
-            </div>
+          <div className="bg-white p-10 rounded-[3rem] shadow-2xl border border-slate-50 space-y-8 relative min-h-[300px] flex flex-col justify-center">
+            
+            {/* CARGANDO (Spinner) - Evita el parpadeo del botón de inicializar */}
+            {isDataLoading ? (
+              <div className="flex flex-col items-center justify-center gap-4 py-8">
+                <Loader2 className="w-10 h-10 animate-spin text-orange-500" />
+                <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Conectando con Planta...</p>
+              </div>
+            ) : (
+              <>
+                {/* SI HAY USUARIOS: MUESTRA EL SELECTOR */}
+                {users.length > 0 && (
+                  <div className="space-y-2 animate-in fade-in">
+                    <label className="text-[10px] font-black uppercase text-slate-400 ml-2">Personal de Planta</label>
+                    <select className="w-full bg-slate-50 border-2 border-slate-100 p-5 rounded-2xl text-lg font-bold outline-none appearance-none cursor-pointer focus:border-orange-500 transition-all" onChange={(e) => handleLogin(e.target.value)} value="">
+                      <option value="" disabled>-- Seleccione su Identidad --</option>
+                      {publicUsers.map(u => <option key={u.id} value={u.id}>{u.name} | {getRoleDisplayName(u.role)}</option>)}
+                    </select>
+                  </div>
+                )}
+
+                {/* SI NO HAY USUARIOS Y YA TERMINO DE CARGAR: MUESTRA BOTON INICIALIZAR */}
+                {users.length === 0 && (
+                  <div className="animate-in fade-in">
+                    <IndustrialButton fullWidth variant="secondary" onClick={seedDB}>Inicializar Base de Datos Nube</IndustrialButton>
+                  </div>
+                )}
+
+                <div className="pt-4 border-t border-slate-100 flex justify-center mt-4">
+                  <button onClick={() => setShowAdminLogin(true)} className="flex items-center gap-2 text-[10px] font-black uppercase text-slate-300 hover:text-orange-600 transition-colors tracking-widest">
+                    <Lock className="w-3 h-3" /> Acceso Gerencial
+                  </button>
+                </div>
+              </>
+            )}
+
           </div>
         </div>
       </div>
@@ -340,13 +367,8 @@ const ManagerView: React.FC<{ users: User[]; machines: Machine[]; records: Maint
   const filteredRecords = useMemo(() => { return records.filter(r => { const matchUser = historyFilter.userId === 'ALL' || r.userId === historyFilter.userId; let matchDate = true; if (historyFilter.dateFrom && historyFilter.dateTo) { matchDate = isWithinInterval(parseISO(r.date), { start: startOfDay(parseISO(historyFilter.dateFrom)), end: endOfDay(parseISO(historyFilter.dateTo)) }); } const matchType = historyFilter.type === 'ALL' ? true : historyFilter.type === 'ISSUE' ? r.isIssue : !r.isIssue; return matchUser && matchDate && matchType; }).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()); }, [records, historyFilter]);
 
   const addUser = async (e: React.FormEvent) => { e.preventDefault(); await addDoc(collection(db, "users"), { ...userForm }); setUserForm({ name: '', phone: '', role: Role.OPERATOR, pin: '1234' }); alert("Usuario creado en nube."); };
-  
-  // CORRECCIÓN 1: assignedTo: null (Firestore no soporta undefined)
   const addMachine = async (e: React.FormEvent) => { e.preventDefault(); await addDoc(collection(db, "machines"), { name: machineForm.name, intervalDays: machineForm.interval, lastMaintenance: new Date().toISOString(), assignedTo: null }); setMachineForm({ name: '', interval: 15 }); alert("Máquina creada en nube."); };
-  
-  // CORRECCIÓN 2: assignedTo: null
   const updateMachineOwner = async (machineId: string, val: string) => { await updateDoc(doc(db, "machines", machineId), { assignedTo: val === "none" ? null : val }); };
-  
   const updateUserRole = async (userId: string, newRole: Role) => { await updateDoc(doc(db, "users", userId), { role: newRole }); };
 
   return (
