@@ -1,8 +1,8 @@
 
 // Use standard Firebase v9+ modular imports for all modules
-import { initializeApp } from "firebase/app";
-import { getFirestore } from "firebase/firestore";
-import { getAnalytics, isSupported } from "firebase/analytics";
+import { initializeApp } from 'firebase/app';
+import { getFirestore } from 'firebase/firestore';
+import { getAnalytics, isSupported } from 'firebase/analytics';
 
 // En Vite/Vercel, usamos import.meta.env
 // Añadimos fallbacks vacíos para evitar que initializeApp falle si no están definidas
