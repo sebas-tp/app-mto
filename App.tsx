@@ -16,7 +16,11 @@ import {
   HardDrive,
   UserCog,
   LayoutDashboard,
-  X // Agregamos icono de cerrar para los modales
+  X,
+  Calendar,
+  Filter,
+  Trophy,
+  Search
 } from 'lucide-react';
 import { 
   PieChart, 
@@ -24,7 +28,12 @@ import {
   Cell, 
   ResponsiveContainer, 
   Tooltip, 
-  Legend 
+  Legend,
+  BarChart, 
+  Bar, 
+  XAxis, 
+  YAxis, 
+  CartesianGrid 
 } from 'recharts';
 import { 
   format, 
@@ -32,7 +41,10 @@ import {
   isPast, 
   parseISO, 
   startOfMonth, 
-  isSameMonth 
+  isSameMonth,
+  isWithinInterval,
+  startOfDay,
+  endOfDay
 } from 'date-fns';
 import { Role, User, Machine, MaintenanceRecord, MaintenanceType } from './types';
 
@@ -328,7 +340,7 @@ const OperatorView: React.FC<{ user: User; machines: Machine[]; setMachines: any
   );
 };
 
-// --- LEADER VIEW (MODIFICADA) ---
+// --- LEADER VIEW ---
 const LeaderView: React.FC<{ user: User; machines: Machine[]; setMachines: any; setRecords: any; records: MaintenanceRecord[] }> = ({ user, machines, setMachines, setRecords, records }) => {
   const [closingIssue, setClosingIssue] = useState<MaintenanceRecord | null>(null);
   const [closingComment, setClosingComment] = useState('');
@@ -501,18 +513,83 @@ const LeaderView: React.FC<{ user: User; machines: Machine[]; setMachines: any; 
   );
 };
 
-// --- MANAGER VIEW ---
+// --- MANAGER VIEW MEJORADA (Business Intelligence) ---
 const ManagerView: React.FC<{ users: User[]; setUsers: any; machines: Machine[]; setMachines: any; records: MaintenanceRecord[]; seedDB: () => void }> = ({ users, setUsers, machines, setMachines, records, seedDB }) => {
-  const [activePanel, setActivePanel] = useState<'STATS' | 'MACHINES' | 'USERS'>('STATS');
+  const [activePanel, setActivePanel] = useState<'STATS' | 'HISTORY' | 'MACHINES' | 'USERS'>('STATS');
+  
+  // Estados para formularios de alta
   const [userForm, setUserForm] = useState({ name: '', phone: '', role: Role.OPERATOR });
   const [machineForm, setMachineForm] = useState({ name: '', interval: 15 });
 
+  // Estados para Filtros de Historial (Auditoría)
+  const [historyFilter, setHistoryFilter] = useState({
+    userId: 'ALL',
+    dateFrom: '',
+    dateTo: '',
+    type: 'ALL' // 'ALL' | 'ISSUE' | 'MANTO'
+  });
+
+  // --- LOGICA DE DATOS Y ESTADISTICAS ---
+
+  // 1. Estado del Parque (Pie Chart)
   const stats = useMemo(() => {
     const total = machines.length;
     const due = machines.filter(m => isPast(addDays(parseISO(m.lastMaintenance), m.intervalDays))).length;
-    return [{ name: 'Al Día', value: total - due, color: '#10b981' }, { name: 'Vencidas', value: due, color: '#f97316' }];
+    return [
+      { name: 'Operativo', value: total - due, color: '#10b981' }, 
+      { name: 'Vencido / Crítico', value: due, color: '#ef4444' }
+    ];
   }, [machines]);
 
+  // 2. Plan vs Ejecución (Bar Chart - Preventivo vs Correctivo)
+  const maintenanceTypeStats = useMemo(() => {
+    const preventive = records.filter(r => !r.isIssue).length;
+    const corrective = records.filter(r => r.isIssue).length;
+    return [
+      { name: 'Preventivo (Plan)', cantidad: preventive },
+      { name: 'Correctivo (Falla)', cantidad: corrective }
+    ];
+  }, [records]);
+
+  // 3. Ranking de Performance (Top 3) - Incluye Operarios y Líderes
+  const ranking = useMemo(() => {
+    // Filtramos a todos los que tocan máquinas (Operarios + Líderes)
+    const activeStaff = users.filter(u => u.role === Role.OPERATOR || u.role === Role.LEADER);
+    const scores = activeStaff.map(u => {
+      const taskCount = records.filter(r => r.userId === u.id).length;
+      return { ...u, score: taskCount };
+    });
+    // Ordenamos descendente y tomamos los 3 primeros
+    return scores.sort((a, b) => b.score - a.score).slice(0, 3);
+  }, [users, records]);
+
+  // 4. Lógica de Filtrado para Historial
+  const filteredRecords = useMemo(() => {
+    return records.filter(r => {
+      // Filtro Usuario
+      const matchUser = historyFilter.userId === 'ALL' || r.userId === historyFilter.userId;
+      
+      // Filtro Fechas
+      let matchDate = true;
+      if (historyFilter.dateFrom && historyFilter.dateTo) {
+        const rDate = parseISO(r.date);
+        matchDate = isWithinInterval(rDate, {
+          start: startOfDay(parseISO(historyFilter.dateFrom)),
+          end: endOfDay(parseISO(historyFilter.dateTo))
+        });
+      }
+
+      // Filtro Tipo (Falla vs Manto)
+      const matchType = historyFilter.type === 'ALL' 
+        ? true 
+        : historyFilter.type === 'ISSUE' ? r.isIssue : !r.isIssue;
+
+      return matchUser && matchDate && matchType;
+    }).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()); // Ordenar mas reciente primero
+  }, [records, historyFilter]);
+
+
+  // --- HANDLERS (Altas) ---
   const addUser = (e: React.FormEvent) => {
     e.preventDefault();
     const newUser: User = { id: 'u' + (users.length + 1), ...userForm };
@@ -535,49 +612,224 @@ const ManagerView: React.FC<{ users: User[]; setUsers: any; machines: Machine[];
 
   return (
     <div className="space-y-12">
-      <div className="flex flex-col md:flex-row justify-between items-center gap-8">
+      {/* HEADER DE NAVEGACION GERENCIAL */}
+      <div className="flex flex-col xl:flex-row justify-between items-center gap-8">
         <div>
           <h2 className="text-5xl font-black text-slate-900 uppercase tracking-tighter">Control <span className="text-orange-600">Maestro</span></h2>
-          <p className="text-slate-400 font-bold uppercase text-[10px] tracking-[0.3em] mt-3">Gerencia Técnica • Supervisión Total</p>
+          <p className="text-slate-400 font-bold uppercase text-[10px] tracking-[0.3em] mt-3">Gerencia Técnica • Dashboard Intelligence</p>
         </div>
-        <div className="flex bg-white p-2 rounded-[2rem] border border-slate-100 shadow-xl shadow-slate-200/50">
-          <button className={`px-8 py-3 rounded-2xl font-black text-[10px] uppercase transition-all tracking-widest ${activePanel === 'STATS' ? 'bg-orange-600 text-white shadow-lg shadow-orange-200' : 'text-slate-400'}`} onClick={() => setActivePanel('STATS')}>KPIs</button>
-          <button className={`px-8 py-3 rounded-2xl font-black text-[10px] uppercase transition-all tracking-widest ${activePanel === 'MACHINES' ? 'bg-orange-600 text-white shadow-lg shadow-orange-200' : 'text-slate-400'}`} onClick={() => setActivePanel('MACHINES')}>Activos</button>
-          <button className={`px-8 py-3 rounded-2xl font-black text-[10px] uppercase transition-all tracking-widest ${activePanel === 'USERS' ? 'bg-orange-600 text-white shadow-lg shadow-orange-200' : 'text-slate-400'}`} onClick={() => setActivePanel('USERS')}>Personal</button>
+        <div className="flex bg-white p-2 rounded-[2rem] border border-slate-100 shadow-xl shadow-slate-200/50 overflow-x-auto max-w-full">
+          {[
+            { id: 'STATS', label: 'KPIs Globales', icon: BarChart3 },
+            { id: 'HISTORY', label: 'Auditoría', icon: History },
+            { id: 'MACHINES', label: 'Activos', icon: HardDrive },
+            { id: 'USERS', label: 'Personal', icon: Users }
+          ].map(tab => (
+            <button 
+              key={tab.id}
+              onClick={() => setActivePanel(tab.id as any)}
+              className={`px-6 py-3 rounded-2xl font-black text-[10px] uppercase transition-all tracking-widest flex items-center gap-2 whitespace-nowrap ${activePanel === tab.id ? 'bg-orange-600 text-white shadow-lg shadow-orange-200' : 'text-slate-400 hover:text-orange-500'}`}
+            >
+              <tab.icon className="w-4 h-4" /> {tab.label}
+            </button>
+          ))}
         </div>
       </div>
 
+      {/* --- PANEL 1: DASHBOARD DE KPIS --- */}
       {activePanel === 'STATS' && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-12">
-          <Card className="flex flex-col items-center">
-            <h3 className="text-xl font-black uppercase text-slate-700 w-full border-b pb-6 mb-8 flex items-center gap-3"><LayoutDashboard className="text-orange-600" /> Rendimiento Planta</h3>
-            <div className="h-[300px] w-full"><ResponsiveContainer><PieChart><Pie data={stats} cx="50%" cy="50%" innerRadius={70} outerRadius={100} paddingAngle={10} dataKey="value">{stats.map((e, i) => <Cell key={i} fill={e.color} strokeWidth={0} />)}</Pie><Tooltip /><Legend verticalAlign="bottom" height={36}/></PieChart></ResponsiveContainer></div>
-            <div className="w-full mt-10 space-y-4">
-              <IndustrialButton variant="outline" fullWidth onClick={seedDB}><Database className="w-4 h-4" /> Restaurar Base de Datos</IndustrialButton>
-            </div>
-          </Card>
-          <Card>
-            <h3 className="text-xl font-black uppercase text-slate-700 border-b pb-6 mb-8 flex items-center gap-3"><Users className="text-orange-600" /> Productividad de Operarios</h3>
-            <div className="space-y-4 max-h-[450px] overflow-y-auto pr-2">
-              {users.filter(u => u.role === Role.OPERATOR).map(u => {
-                const count = records.filter(r => r.userId === u.id && isSameMonth(parseISO(r.date), startOfMonth(new Date()))).length;
-                return (
-                  <div key={u.id} className="flex justify-between items-center p-6 bg-slate-50 rounded-3xl border border-slate-100 hover:border-orange-300 transition-colors">
-                    <span className="font-black text-slate-800 uppercase text-sm tracking-tight">{u.name}</span>
-                    <div className="flex items-center gap-4">
-                      <span className="bg-white shadow-sm px-4 py-2 rounded-xl text-[10px] font-black uppercase text-emerald-600 border border-emerald-100">{count} Tareas/Mes</span>
-                      <MessageSquare className="w-6 h-6 text-emerald-500 cursor-pointer hover:scale-110 transition-transform" onClick={() => window.open(`https://wa.me/${u.phone}`)} />
+        <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+          
+          {/* PRIMERA FILA: RANKING Y ESTADO */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            {/* RANKING PODIO */}
+            <Card className="lg:col-span-2 bg-gradient-to-br from-slate-900 to-slate-800 text-white border-none shadow-slate-400/50 relative overflow-hidden">
+              <div className="absolute top-0 right-0 p-8 opacity-10"><Trophy className="w-48 h-48" /></div>
+              <h3 className="text-xl font-black uppercase mb-8 flex items-center gap-3 relative z-10"><Trophy className="text-yellow-400" /> Top Performance (Mes Actual)</h3>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 items-end relative z-10">
+                {ranking.map((u, index) => {
+                  const styles = [
+                    "bg-yellow-400 text-yellow-900 border-yellow-300 h-48", // 1st
+                    "bg-slate-300 text-slate-900 border-slate-200 h-40",   // 2nd
+                    "bg-orange-400 text-orange-900 border-orange-300 h-32"  // 3rd
+                  ];
+                  return (
+                    <div key={u.id} className={`${styles[index]} p-5 rounded-3xl flex flex-col justify-between border-t-4 shadow-xl transform hover:-translate-y-2 transition-transform`}>
+                      <div className="text-right font-black text-4xl opacity-50">#{index + 1}</div>
+                      <div>
+                        <p className="text-4xl font-black mb-1">{u.score}</p>
+                        <p className="font-bold uppercase text-xs leading-tight truncate">{u.name}</p>
+                        <p className="text-[9px] font-black uppercase tracking-widest opacity-60 mt-1">{u.role === Role.LEADER ? 'Líder' : 'Operario'}</p>
+                      </div>
                     </div>
-                  </div>
-                );
-              })}
-            </div>
-          </Card>
+                  );
+                })}
+              </div>
+            </Card>
+
+            {/* GRAFICO DE TORTA (ESTADO) */}
+            <Card className="flex flex-col items-center justify-center">
+              <h3 className="text-lg font-black uppercase text-slate-700 w-full text-center mb-4">Salud del Parque</h3>
+              <div className="h-[200px] w-full">
+                <ResponsiveContainer>
+                  <PieChart>
+                    <Pie data={stats} cx="50%" cy="50%" innerRadius={60} outerRadius={80} paddingAngle={5} dataKey="value">
+                      {stats.map((e, i) => <Cell key={i} fill={e.color} strokeWidth={0} />)}
+                    </Pie>
+                    <Tooltip contentStyle={{borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)'}} />
+                    <Legend verticalAlign="bottom" />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+            </Card>
+          </div>
+
+          {/* SEGUNDA FILA: BARRAS Y LISTA DETALLADA */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            {/* GRAFICO DE BARRAS (PLAN VS EJECUCION) */}
+            <Card>
+              <h3 className="text-xl font-black uppercase text-slate-700 border-b pb-6 mb-8 flex items-center gap-3"><BarChart3 className="text-orange-600" /> Plan vs. Incidencias</h3>
+              <div className="h-[300px] w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={maintenanceTypeStats}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                    <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fontSize: 10, fontWeight: 'bold', fill: '#94a3b8'}} />
+                    <YAxis axisLine={false} tickLine={false} tick={{fontSize: 10, fontWeight: 'bold', fill: '#94a3b8'}} />
+                    <Tooltip cursor={{fill: '#f8fafc'}} contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'}} />
+                    <Bar dataKey="cantidad" fill="#f97316" radius={[10, 10, 0, 0]} barSize={60} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </Card>
+
+            {/* LISTA DE PRODUCTIVIDAD (AHORA INCLUYE LIDERES) */}
+            <Card>
+              <h3 className="text-xl font-black uppercase text-slate-700 border-b pb-6 mb-8 flex items-center gap-3"><Users className="text-orange-600" /> Productividad Mensual</h3>
+              <div className="space-y-4 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
+                {users.filter(u => u.role === Role.OPERATOR || u.role === Role.LEADER).map(u => {
+                  const count = records.filter(r => r.userId === u.id && isSameMonth(parseISO(r.date), startOfMonth(new Date()))).length;
+                  return (
+                    <div key={u.id} className="flex justify-between items-center p-4 bg-slate-50 rounded-2xl border border-slate-100 hover:border-orange-300 transition-colors">
+                      <div>
+                        <span className="font-black text-slate-800 uppercase text-xs tracking-tight block">{u.name}</span>
+                        <span className={`text-[9px] font-bold uppercase ${u.role === Role.LEADER ? 'text-amber-600' : 'text-slate-400'}`}>
+                          {u.role === Role.LEADER ? 'Resp. Mantenimiento' : 'Operario Línea'}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <span className="bg-white shadow-sm px-3 py-1 rounded-lg text-[10px] font-black uppercase text-orange-600 border border-orange-100">{count} Tareas</span>
+                        <MessageSquare className="w-5 h-5 text-emerald-500 cursor-pointer hover:scale-110 transition-transform" onClick={() => window.open(`https://wa.me/${u.phone}`)} />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </Card>
+          </div>
         </div>
       )}
 
+      {/* --- PANEL 2: AUDITORÍA E HISTORIAL (NUEVO) --- */}
+      {activePanel === 'HISTORY' && (
+        <div className="space-y-8 animate-in fade-in zoom-in duration-300">
+           {/* BARRA DE FILTROS */}
+           <Card className="bg-slate-900 text-white border-none shadow-2xl shadow-slate-400/20">
+              <div className="flex flex-col md:flex-row gap-6 items-end">
+                 <div className="w-full md:w-1/4 space-y-2">
+                    <label className="text-[10px] font-black uppercase text-slate-400 flex gap-2"><Calendar className="w-3 h-3"/> Desde</label>
+                    <input type="date" className="w-full bg-slate-800 border border-slate-700 rounded-xl p-3 text-sm font-bold outline-none focus:border-orange-500 text-white" 
+                      value={historyFilter.dateFrom} onChange={e => setHistoryFilter({...historyFilter, dateFrom: e.target.value})} />
+                 </div>
+                 <div className="w-full md:w-1/4 space-y-2">
+                    <label className="text-[10px] font-black uppercase text-slate-400 flex gap-2"><Calendar className="w-3 h-3"/> Hasta</label>
+                    <input type="date" className="w-full bg-slate-800 border border-slate-700 rounded-xl p-3 text-sm font-bold outline-none focus:border-orange-500 text-white" 
+                      value={historyFilter.dateTo} onChange={e => setHistoryFilter({...historyFilter, dateTo: e.target.value})} />
+                 </div>
+                 <div className="w-full md:w-1/4 space-y-2">
+                    <label className="text-[10px] font-black uppercase text-slate-400 flex gap-2"><UserCog className="w-3 h-3"/> Empleado</label>
+                    <select className="w-full bg-slate-800 border border-slate-700 rounded-xl p-3 text-sm font-bold outline-none focus:border-orange-500 text-white cursor-pointer appearance-none"
+                      value={historyFilter.userId} onChange={e => setHistoryFilter({...historyFilter, userId: e.target.value})}>
+                        <option value="ALL">Todos los Usuarios</option>
+                        {users.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+                    </select>
+                 </div>
+                 <div className="w-full md:w-1/4 space-y-2">
+                    <label className="text-[10px] font-black uppercase text-slate-400 flex gap-2"><Filter className="w-3 h-3"/> Tipo Registro</label>
+                    <select className="w-full bg-slate-800 border border-slate-700 rounded-xl p-3 text-sm font-bold outline-none focus:border-orange-500 text-white cursor-pointer appearance-none"
+                      value={historyFilter.type} onChange={e => setHistoryFilter({...historyFilter, type: e.target.value})}>
+                        <option value="ALL">Todo (Fallas + Manto)</option>
+                        <option value="MANTO">Solo Mantenimientos</option>
+                        <option value="ISSUE">Solo Averías/Fallas</option>
+                    </select>
+                 </div>
+              </div>
+           </Card>
+
+           {/* TABLA DE RESULTADOS */}
+           <Card className="p-0 overflow-hidden border-orange-100">
+             <div className="overflow-x-auto">
+               <table className="w-full text-left border-collapse">
+                 <thead className="bg-orange-50 text-orange-900 text-[10px] font-black uppercase tracking-widest">
+                   <tr>
+                     <th className="p-6">Fecha y Hora</th>
+                     <th className="p-6">Activo / Máquina</th>
+                     <th className="p-6">Responsable</th>
+                     <th className="p-6">Detalle / Observación</th>
+                     <th className="p-6 text-center">Tipo</th>
+                   </tr>
+                 </thead>
+                 <tbody className="text-xs font-medium text-slate-600">
+                   {filteredRecords.length > 0 ? filteredRecords.map(r => {
+                     const user = users.find(u => u.id === r.userId);
+                     const machine = machines.find(m => m.id === r.machineId);
+                     return (
+                       <tr key={r.id} className="border-b border-slate-100 hover:bg-slate-50 transition-colors group">
+                         <td className="p-6 font-bold whitespace-nowrap text-slate-400 group-hover:text-orange-600 transition-colors">
+                            {format(parseISO(r.date), 'dd/MM/yyyy HH:mm')}
+                         </td>
+                         <td className="p-6 uppercase font-black text-slate-800">{machine?.name || 'Máquina Eliminada'}</td>
+                         <td className="p-6">
+                            <div className="flex items-center gap-2">
+                              <span className="w-6 h-6 rounded-full bg-slate-200 flex items-center justify-center text-[10px] font-black text-slate-500">
+                                {user?.name.charAt(0)}
+                              </span>
+                              <span className="font-bold">{user?.name}</span>
+                            </div>
+                         </td>
+                         <td className="p-6 italic max-w-xs truncate" title={r.observations}>
+                           {r.observations || <span className="text-slate-300">Sin observaciones</span>}
+                         </td>
+                         <td className="p-6 text-center">
+                           {r.isIssue ? (
+                             <span className="inline-flex items-center gap-1 bg-red-100 text-red-700 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-wider">
+                               <AlertTriangle className="w-3 h-3" /> Falla
+                             </span>
+                           ) : (
+                             <span className="inline-flex items-center gap-1 bg-emerald-100 text-emerald-700 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-wider">
+                               <CheckCircle2 className="w-3 h-3" /> OK
+                             </span>
+                           )}
+                         </td>
+                       </tr>
+                     );
+                   }) : (
+                     <tr>
+                       <td colSpan={5} className="p-12 text-center text-slate-400 font-bold uppercase text-sm">
+                         <Search className="w-8 h-8 mx-auto mb-2 opacity-20"/>
+                         No se encontraron registros con los filtros actuales
+                       </td>
+                     </tr>
+                   )}
+                 </tbody>
+               </table>
+             </div>
+           </Card>
+        </div>
+      )}
+
+      {/* --- PANEL 3: ACTIVOS (Igual que antes) --- */}
       {activePanel === 'MACHINES' && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-12">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-12 animate-in fade-in duration-300">
           <Card className="lg:col-span-1 border-orange-200 bg-orange-50/10">
             <form onSubmit={addMachine} className="space-y-6">
               <h3 className="text-2xl font-black text-slate-800 uppercase tracking-tighter flex items-center gap-3"><Plus className="text-orange-600" /> Registro de Activo</h3>
@@ -618,8 +870,9 @@ const ManagerView: React.FC<{ users: User[]; setUsers: any; machines: Machine[];
         </div>
       )}
 
+      {/* --- PANEL 4: PERSONAL (Igual que antes) --- */}
       {activePanel === 'USERS' && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-12">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-12 animate-in fade-in duration-300">
           <Card className="lg:col-span-1 border-orange-200 bg-orange-50/10">
             <form onSubmit={addUser} className="space-y-6">
               <h3 className="text-2xl font-black text-slate-800 uppercase tracking-tighter flex items-center gap-3"><UserPlus className="text-orange-600" /> Nuevo Colaborador</h3>
