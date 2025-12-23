@@ -14,7 +14,8 @@ import {
 } from 'date-fns';
 
 // --- FIREBASE IMPORTS ---
-import { db } from './firebaseConfig'; 
+import { auth, db } from './firebaseConfig'; 
+import { signInWithEmailAndPassword } from 'firebase/auth'; // <--- IMPORTANTE: Para el auto-login
 import { 
   collection, doc, addDoc, updateDoc, onSnapshot, query, orderBy, setDoc
 } from 'firebase/firestore';
@@ -74,26 +75,54 @@ const PinModal: React.FC<{ isOpen: boolean; onClose: () => void; onConfirm: (pin
 // --- MAIN APP ---
 
 export default function App() {
+  // Datos
   const [users, setUsers] = useState<User[]>([]);
   const [machines, setMachines] = useState<Machine[]>([]);
   const [records, setRecords] = useState<MaintenanceRecord[]>([]);
   
+  // Login
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [view, setView] = useState<'LOGIN' | 'DASHBOARD'>('LOGIN');
   const [showAdminLogin, setShowAdminLogin] = useState(false);
   const [adminPass, setAdminPass] = useState('');
 
+  // --- AUTO-LOGIN DEL SISTEMA ("EL PORTERO") ---
   useEffect(() => {
+    const conectarSistema = async () => {
+      // Si ya hay una sesión de Firebase activa, no intentamos loguear de nuevo
+      if (auth.currentUser) return;
+
+      try {
+        // Credenciales del "Usuario Portero" (Solo lectura/escritura limitada por reglas)
+        // Asegúrate de haber creado este usuario en Firebase Authentication previamente
+        await signInWithEmailAndPassword(auth, "planta@sistema.com", "acceso_planta_2024");
+        console.log("🟢 Sistema conectado a la nube (Modo Portero).");
+      } catch (error) {
+        console.error("🔴 Error conectando al sistema:", error);
+        // Si falla (ej: no existe el usuario), la app podría no cargar datos si las reglas son estrictas.
+      }
+    };
+    conectarSistema();
+  }, []);
+
+  // --- SINCRONIZACIÓN REALTIME ---
+  useEffect(() => {
+    // Estas escuchas solo funcionarán si el "Portero" se logueó correctamente
+    // o si las reglas de Firebase están en modo "público" (allow if true).
+    
     const unsubUsers = onSnapshot(collection(db, "users"), (snapshot) => {
       setUsers(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as User)));
-    });
+    }, (error) => console.error("Error leyendo usuarios:", error));
+
     const unsubMachines = onSnapshot(collection(db, "machines"), (snapshot) => {
       setMachines(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Machine)));
-    });
+    }, (error) => console.error("Error leyendo máquinas:", error));
+
     const unsubRecords = onSnapshot(query(collection(db, "records"), orderBy("date", "desc")), (snapshot) => {
       setRecords(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as MaintenanceRecord)));
-    });
+    }, (error) => console.error("Error leyendo registros:", error));
     
+    // Recuperar sesión local si existe (para mantener el "Visual Login")
     const savedUser = localStorage.getItem('local_session_user');
     if (savedUser) {
       setCurrentUser(JSON.parse(savedUser));
@@ -102,6 +131,8 @@ export default function App() {
 
     return () => { unsubUsers(); unsubMachines(); unsubRecords(); };
   }, []);
+
+  // --- ACTIONS ---
 
   const handleLogin = (userId: string) => {
     const user = users.find(u => u.id === userId);
@@ -113,7 +144,7 @@ export default function App() {
   };
 
   const handleAdminLogin = () => {
-    if (adminPass === 'admin123') {
+    if (adminPass === 'admin123') { // Clave visual para la app
       const admin = users.find(u => u.role === Role.MANAGER);
       if (admin) {
         setCurrentUser(admin);
@@ -135,8 +166,9 @@ export default function App() {
     setView('LOGIN');
   };
 
+  // --- SEED DATABASE ---
   const seedDB = async () => {
-    const confirm = window.confirm("¿Seguro? Esto borrará/rescribirá los datos iniciales en la Nube.");
+    const confirm = window.confirm("¿Seguro? Esto escribirá datos de prueba en la Nube.");
     if (!confirm) return;
 
     try {
@@ -145,13 +177,13 @@ export default function App() {
       await setDoc(doc(db, "users", "u3"), { name: 'Ana Gerente', role: Role.MANAGER, phone: '5491112345678', pin: '9999' });
 
       await setDoc(doc(db, "machines", "m1"), { name: 'Inyectora Plástico I-01', assignedTo: 'u1', lastMaintenance: new Date(Date.now() - 20 * 86400000).toISOString(), intervalDays: 15 });
-      await setDoc(doc(db, "machines", "m2"), { name: 'Brazo Robótico R-4', assignedTo: undefined, lastMaintenance: new Date(Date.now() - 2 * 86400000).toISOString(), intervalDays: 15 });
+      await setDoc(doc(db, "machines", "m2"), { name: 'Brazo Robótico R-4', assignedTo: null, lastMaintenance: new Date(Date.now() - 2 * 86400000).toISOString(), intervalDays: 15 });
       await setDoc(doc(db, "machines", "m3"), { name: 'Compresor Central C-80', assignedTo: 'u2', lastMaintenance: new Date(Date.now() - 40 * 86400000).toISOString(), intervalDays: 30 });
 
-      alert("Base de Datos Inicializada Correctamente.");
+      alert("Base de Datos Inicializada.");
     } catch (error) {
       console.error(error);
-      alert("Error al escribir en Firebase. Revisa las reglas de seguridad o la consola.");
+      alert("Error al escribir. Verifica que el 'Usuario Portero' esté creado y las reglas permitan escribir.");
     }
   };
 
@@ -161,6 +193,7 @@ export default function App() {
     return "OPERARIO DE LÍNEA";
   };
 
+  // --- LOGIN VIEW ---
   if (view === 'LOGIN') {
     const publicUsers = users.filter(u => u.role !== Role.MANAGER);
 
@@ -197,7 +230,9 @@ export default function App() {
                 {publicUsers.map(u => <option key={u.id} value={u.id}>{u.name} | {getRoleDisplayName(u.role)}</option>)}
               </select>
             </div>
+            
             {users.length === 0 && (<IndustrialButton fullWidth variant="secondary" onClick={seedDB}>Inicializar Base de Datos Nube</IndustrialButton>)}
+
             <div className="pt-4 border-t border-slate-100 flex justify-center">
               <button onClick={() => setShowAdminLogin(true)} className="flex items-center gap-2 text-[10px] font-black uppercase text-slate-300 hover:text-orange-600 transition-colors tracking-widest">
                 <Lock className="w-3 h-3" /> Acceso Gerencial
@@ -214,7 +249,7 @@ export default function App() {
       <header className="bg-white/80 backdrop-blur-md border-b border-slate-100 px-8 py-5 flex items-center justify-between sticky top-0 z-50">
         <div className="flex items-center gap-4">
           <div className="bg-orange-600 p-2.5 rounded-2xl text-white shadow-lg shadow-orange-200"><Settings className="w-7 h-7" /></div>
-          <div><h1 className="text-2xl font-black uppercase tracking-tighter text-slate-900 leading-none">TPM <span className="text-orange-600">PRO</span></h1><p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mt-1">Status: Conectado a Nube</p></div>
+          <div><h1 className="text-2xl font-black uppercase tracking-tighter text-slate-900 leading-none">TPM <span className="text-orange-600">PRO</span></h1><p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mt-1">Status: Conectado</p></div>
         </div>
         <div className="flex items-center gap-8">
           <div className="text-right hidden sm:block"><p className="text-sm font-black text-slate-900 uppercase leading-none">{currentUser?.name}</p><span className="text-[9px] font-black bg-amber-100 text-amber-700 px-3 py-1 rounded-full uppercase mt-2 inline-block tracking-tighter">{getRoleDisplayName(currentUser?.role)}</span></div>
@@ -320,8 +355,8 @@ const ManagerView: React.FC<{ users: User[]; machines: Machine[]; records: Maint
   const filteredRecords = useMemo(() => { return records.filter(r => { const matchUser = historyFilter.userId === 'ALL' || r.userId === historyFilter.userId; let matchDate = true; if (historyFilter.dateFrom && historyFilter.dateTo) { matchDate = isWithinInterval(parseISO(r.date), { start: startOfDay(parseISO(historyFilter.dateFrom)), end: endOfDay(parseISO(historyFilter.dateTo)) }); } const matchType = historyFilter.type === 'ALL' ? true : historyFilter.type === 'ISSUE' ? r.isIssue : !r.isIssue; return matchUser && matchDate && matchType; }).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()); }, [records, historyFilter]);
 
   const addUser = async (e: React.FormEvent) => { e.preventDefault(); await addDoc(collection(db, "users"), { ...userForm }); setUserForm({ name: '', phone: '', role: Role.OPERATOR, pin: '1234' }); alert("Usuario creado en nube."); };
-  const addMachine = async (e: React.FormEvent) => { e.preventDefault(); await addDoc(collection(db, "machines"), { name: machineForm.name, intervalDays: machineForm.interval, lastMaintenance: new Date().toISOString(), assignedTo: null }); setMachineForm({ name: '', interval: 15 }); alert("Máquina creada en nube."); }; // <--- CORREGIDO (assignedTo: null)
-  const updateMachineOwner = async (machineId: string, val: string) => { await updateDoc(doc(db, "machines", machineId), { assignedTo: val === "none" ? null : val }); }; // <--- CORREGIDO
+  const addMachine = async (e: React.FormEvent) => { e.preventDefault(); await addDoc(collection(db, "machines"), { name: machineForm.name, intervalDays: machineForm.interval, lastMaintenance: new Date().toISOString(), assignedTo: null }); setMachineForm({ name: '', interval: 15 }); alert("Máquina creada en nube."); };
+  const updateMachineOwner = async (machineId: string, val: string) => { await updateDoc(doc(db, "machines", machineId), { assignedTo: val === "none" ? null : val }); };
   const updateUserRole = async (userId: string, newRole: Role) => { await updateDoc(doc(db, "users", userId), { role: newRole }); };
 
   return (
