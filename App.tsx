@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Users, Settings, BarChart3, CheckCircle2, AlertTriangle, Wrench, LogOut, 
   MessageSquare, ClipboardList, Database, Plus, UserPlus, History, HardDrive, 
-  UserCog, LayoutDashboard, X, Calendar, Filter, Trophy, Search, Lock, Fingerprint
+  UserCog, LayoutDashboard, X, Calendar, Filter, Trophy, Search, Lock, Fingerprint, Loader2
 } from 'lucide-react';
 import { 
   PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend,
@@ -12,24 +12,27 @@ import {
   format, addDays, isPast, parseISO, startOfMonth, isSameMonth, 
   isWithinInterval, startOfDay, endOfDay 
 } from 'date-fns';
+
+// --- FIREBASE IMPORTS ---
+import { auth, db } from './firebaseConfig'; // Asegúrate de que este archivo existe y exporta auth y db
+import { 
+  signInWithEmailAndPassword, 
+  signOut, 
+  onAuthStateChanged 
+} from 'firebase/auth';
+import { 
+  collection, 
+  doc, 
+  getDoc, 
+  addDoc, 
+  updateDoc, 
+  onSnapshot, 
+  query, 
+  orderBy, 
+  setDoc
+} from 'firebase/firestore';
+
 import { Role, User, Machine, MaintenanceRecord, MaintenanceType } from './types';
-
-// --- DATABASE SIMULATION ---
-const STORAGE_KEYS = {
-  USERS: 'tpm_users',
-  MACHINES: 'tpm_machines',
-  RECORDS: 'tpm_records',
-  AUTH: 'tpm_auth_user'
-};
-
-const getDB = <T,>(key: string, initial: T): T => {
-  const data = localStorage.getItem(key);
-  return data ? JSON.parse(data) : initial;
-};
-
-const setDB = (key: string, data: any) => {
-  localStorage.setItem(key, JSON.stringify(data));
-};
 
 // --- REUSABLE UI COMPONENTS ---
 
@@ -83,7 +86,7 @@ const PinModal: React.FC<{ isOpen: boolean; onClose: () => void; onConfirm: (pin
         <input 
           type="password" 
           maxLength={4}
-          placeholder="Ingrese su PIN (4 dígitos)"
+          placeholder="PIN"
           className="w-full text-center text-3xl font-black tracking-[1em] p-4 border-b-4 border-orange-500 outline-none mb-8 bg-transparent"
           value={pin}
           onChange={(e) => setPin(e.target.value.replace(/[^0-9]/g, ''))}
@@ -102,87 +105,91 @@ const PinModal: React.FC<{ isOpen: boolean; onClose: () => void; onConfirm: (pin
 // --- MAIN APPLICATION ---
 
 export default function App() {
+  // ESTADOS DE DATOS (Vienen de Firebase)
   const [users, setUsers] = useState<User[]>([]);
   const [machines, setMachines] = useState<Machine[]>([]);
   const [records, setRecords] = useState<MaintenanceRecord[]>([]);
+  
+  // ESTADOS DE SESIÓN
   const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const [view, setView] = useState<'LOGIN' | 'DASHBOARD'>('LOGIN');
+  const [loadingAuth, setLoadingAuth] = useState(true);
+  
+  // ESTADOS DEL FORMULARIO DE LOGIN
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [errorMsg, setErrorMsg] = useState('');
 
-  // Estados para Login Admin
-  const [showAdminLogin, setShowAdminLogin] = useState(false);
-  const [adminPass, setAdminPass] = useState('');
-
+  // 1. EFECTO: Escuchar autenticación y cargar perfil de usuario
   useEffect(() => {
-    setUsers(getDB(STORAGE_KEYS.USERS, []));
-    setMachines(getDB(STORAGE_KEYS.MACHINES, []));
-    setRecords(getDB(STORAGE_KEYS.RECORDS, []));
-    const savedUser = localStorage.getItem(STORAGE_KEYS.AUTH);
-    if (savedUser) {
-      setCurrentUser(JSON.parse(savedUser));
-      setView('DASHBOARD');
-    }
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      if (firebaseUser) {
+        // Usuario logueado, buscamos sus datos en Firestore
+        const docRef = doc(db, "users", firebaseUser.uid);
+        const docSnap = await getDoc(docRef);
+        
+        if (docSnap.exists()) {
+          // Unimos el ID de auth con los datos de firestore
+          setCurrentUser({ id: firebaseUser.uid, ...docSnap.data() } as User);
+        } else {
+          console.error("Usuario autenticado pero sin documento en Firestore 'users'");
+          // Aquí podrías manejar el caso de un usuario nuevo sin perfil
+        }
+      } else {
+        setCurrentUser(null);
+      }
+      setLoadingAuth(false);
+    });
+    return () => unsubscribe();
   }, []);
 
-  const persistMachines = (newMachines: Machine[]) => {
-    setMachines(newMachines);
-    setDB(STORAGE_KEYS.MACHINES, newMachines);
-  };
+  // 2. EFECTO: Escuchar DATOS EN TIEMPO REAL (Solo si hay usuario)
+  useEffect(() => {
+    if (!currentUser) return; // Si no hay login, no escuchamos datos (ahorrar lecturas)
 
-  const persistUsers = (newUsers: User[]) => {
-    setUsers(newUsers);
-    setDB(STORAGE_KEYS.USERS, newUsers);
-  };
+    // A. Escuchar Máquinas
+    const unsubMachines = onSnapshot(collection(db, "machines"), (snapshot) => {
+      const machinesData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Machine));
+      setMachines(machinesData);
+    });
 
-  const seedDB = () => {
-    // AGREGAMOS PIN POR DEFECTO "1234" A TODOS
-    const initialUsers: User[] = [
-      { id: 'u1', name: 'Juan Operario', role: Role.OPERATOR, phone: '5491112345678', pin: '1234' },
-      { id: 'u2', name: 'Pedro Líder', role: Role.LEADER, phone: '5491112345678', pin: '1234' },
-      { id: 'u3', name: 'Ana Gerente', role: Role.MANAGER, pin: '9999' }, // El pin de gerencia es para firmar auditorías (futuro)
-    ];
-    const initialMachines: Machine[] = [
-      { id: 'm1', name: 'Inyectora Plástico I-01', assignedTo: 'u1', lastMaintenance: new Date(Date.now() - 20 * 86400000).toISOString(), intervalDays: 15 },
-      { id: 'm2', name: 'Brazo Robótico R-4', assignedTo: undefined, lastMaintenance: new Date(Date.now() - 2 * 86400000).toISOString(), intervalDays: 15 },
-      { id: 'm3', name: 'Compresor Central C-80', assignedTo: 'u2', lastMaintenance: new Date(Date.now() - 40 * 86400000).toISOString(), intervalDays: 30 },
-    ];
-    persistUsers(initialUsers);
-    persistMachines(initialMachines);
-    setRecords([]);
-    setDB(STORAGE_KEYS.RECORDS, []);
-    alert("Sistema Reiniciado. PIN por defecto para todos: 1234");
-  };
+    // B. Escuchar Registros (Ordenados por fecha)
+    const qRecords = query(collection(db, "records"), orderBy("date", "desc"));
+    const unsubRecords = onSnapshot(qRecords, (snapshot) => {
+      const recordsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as MaintenanceRecord));
+      setRecords(recordsData);
+    });
 
-  const handleLogin = (userId: string) => {
-    const user = users.find(u => u.id === userId);
-    if (user) {
-      setCurrentUser(user);
-      localStorage.setItem(STORAGE_KEYS.AUTH, JSON.stringify(user));
-      setView('DASHBOARD');
-    }
-  };
+    // C. Escuchar Usuarios (Solo necesario para Manager o selects)
+    const unsubUsers = onSnapshot(collection(db, "users"), (snapshot) => {
+      const usersData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as User));
+      setUsers(usersData);
+    });
 
-  const handleAdminLogin = () => {
-    if (adminPass === 'admin123') { // CONTRASEÑA MAESTRA FIJA
-      // Buscamos al primer gerente disponible o creamos uno temporal
-      const adminUser = users.find(u => u.role === Role.MANAGER);
-      if (adminUser) {
-        setCurrentUser(adminUser);
-        localStorage.setItem(STORAGE_KEYS.AUTH, JSON.stringify(adminUser));
-        setView('DASHBOARD');
-        setShowAdminLogin(false);
-        setAdminPass('');
-      } else {
-        alert("Error: No existe usuario Gerente en la base de datos. Ejecute 'Inicializar Planta'.");
-      }
-    } else {
-      alert("Acceso Denegado: Contraseña incorrecta.");
+    return () => {
+      unsubMachines();
+      unsubRecords();
+      unsubUsers();
+    };
+  }, [currentUser]); // Se ejecuta cuando cambia currentUser
+
+  // --- ACTIONS ---
+
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMsg('');
+    try {
+      await signInWithEmailAndPassword(auth, email, password);
+      // El useEffect de onAuthStateChanged se encargará del resto
+    } catch (error: any) {
+      console.error("Login error:", error);
+      setErrorMsg("Credenciales inválidas. Verifique Email y Contraseña.");
     }
   };
 
   const handleLogout = () => {
-    setCurrentUser(null);
-    localStorage.removeItem(STORAGE_KEYS.AUTH);
-    setView('LOGIN');
+    signOut(auth);
+    setEmail('');
+    setPassword('');
   };
 
   const getRoleDisplayName = (role?: Role) => {
@@ -191,34 +198,19 @@ export default function App() {
     return "OPERARIO DE LÍNEA";
   };
 
-  if (view === 'LOGIN') {
-    // FILTRAR: Solo mostramos OPERARIOS y LIDERES en la lista pública
-    const publicUsers = users.filter(u => u.role !== Role.MANAGER);
+  // --- LOADING SCREEN ---
+  if (loadingAuth) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-slate-50">
+        <Loader2 className="w-10 h-10 animate-spin text-orange-600" />
+      </div>
+    );
+  }
 
+  // --- LOGIN VIEW (FORMULARIO REAL) ---
+  if (!currentUser) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-white p-6 relative overflow-hidden">
-        
-        {/* MODAL ADMIN LOGIN */}
-        {showAdminLogin && (
-          <div className="fixed inset-0 bg-slate-900/90 z-50 flex items-center justify-center p-6 animate-in fade-in duration-300">
-            <Card className="w-full max-w-md border-slate-700 bg-slate-800 text-white shadow-2xl">
-              <div className="flex justify-between items-center mb-6">
-                <h3 className="text-xl font-black uppercase flex items-center gap-3"><Lock className="text-orange-500"/> Acceso Restringido</h3>
-                <button onClick={() => setShowAdminLogin(false)}><X className="text-slate-400 hover:text-white"/></button>
-              </div>
-              <p className="text-sm text-slate-400 mb-6 font-medium">Área exclusiva para Gerencia Técnica y Auditoría. Ingrese sus credenciales.</p>
-              <input 
-                type="password" 
-                placeholder="Contraseña de Administración"
-                className="w-full p-4 rounded-xl bg-slate-900 border border-slate-600 text-white font-bold mb-6 outline-none focus:border-orange-500"
-                value={adminPass}
-                onChange={e => setAdminPass(e.target.value)}
-              />
-              <IndustrialButton fullWidth onClick={handleAdminLogin}>Ingresar al Panel</IndustrialButton>
-            </Card>
-          </div>
-        )}
-
         <div className="w-full max-w-md space-y-12 relative z-10">
           <div className="text-center space-y-4">
             <div className="inline-block p-5 bg-orange-100 rounded-[2rem] text-orange-600 shadow-lg shadow-orange-100">
@@ -227,28 +219,48 @@ export default function App() {
             <h1 className="text-6xl font-black uppercase tracking-tighter text-slate-900 leading-none">TPM <span className="text-orange-600 underline decoration-amber-500">PRO</span></h1>
             <p className="text-slate-400 font-bold uppercase tracking-[0.2em] text-[10px]">Portal de Acceso Industrial</p>
           </div>
-          <div className="bg-white p-10 rounded-[3rem] shadow-2xl border border-slate-50 space-y-8 relative">
-            <div className="space-y-2">
-              <label className="text-[10px] font-black uppercase text-slate-400 ml-2">Personal de Planta</label>
-              <select className="w-full bg-slate-50 border-2 border-slate-100 p-5 rounded-2xl text-lg font-bold outline-none appearance-none cursor-pointer focus:border-orange-500 transition-all" onChange={(e) => handleLogin(e.target.value)} value="">
-                <option value="" disabled>-- Seleccione su Identidad --</option>
-                {publicUsers.map(u => <option key={u.id} value={u.id}>{u.name} | {getRoleDisplayName(u.role)}</option>)}
-              </select>
-            </div>
-            {users.length === 0 && <IndustrialButton fullWidth variant="secondary" onClick={seedDB}>Inicializar Planta</IndustrialButton>}
-            
-            {/* BOTON DE GERENCIA DISCRETO */}
-            <div className="pt-4 border-t border-slate-100 flex justify-center">
-              <button onClick={() => setShowAdminLogin(true)} className="flex items-center gap-2 text-[10px] font-black uppercase text-slate-300 hover:text-orange-600 transition-colors tracking-widest">
-                <Lock className="w-3 h-3" /> Acceso Gerencial
-              </button>
-            </div>
-          </div>
+          
+          <Card className="shadow-2xl border-slate-50 relative">
+            <form onSubmit={handleLogin} className="space-y-6">
+              <div className="space-y-2">
+                <label className="text-[10px] font-black uppercase text-slate-400 ml-2">Correo Corporativo</label>
+                <input 
+                  type="email" 
+                  required
+                  className="w-full bg-slate-50 border-2 border-slate-100 p-4 rounded-2xl text-lg font-bold outline-none focus:border-orange-500 transition-all"
+                  placeholder="usuario@tpmpro.com"
+                  value={email}
+                  onChange={e => setEmail(e.target.value)}
+                />
+              </div>
+              
+              <div className="space-y-2">
+                <label className="text-[10px] font-black uppercase text-slate-400 ml-2">Clave de Acceso</label>
+                <input 
+                  type="password" 
+                  required
+                  className="w-full bg-slate-50 border-2 border-slate-100 p-4 rounded-2xl text-lg font-bold outline-none focus:border-orange-500 transition-all"
+                  placeholder="••••••••"
+                  value={password}
+                  onChange={e => setPassword(e.target.value)}
+                />
+              </div>
+
+              {errorMsg && (
+                <div className="bg-red-50 text-red-600 p-3 rounded-xl text-xs font-bold text-center border border-red-100 flex items-center justify-center gap-2">
+                  <AlertTriangle className="w-4 h-4" /> {errorMsg}
+                </div>
+              )}
+
+              <IndustrialButton fullWidth type="submit">Ingresar al Sistema</IndustrialButton>
+            </form>
+          </Card>
         </div>
       </div>
     );
   }
 
+  // --- APP DASHBOARD ---
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col font-sans">
       <header className="bg-white/80 backdrop-blur-md border-b border-slate-100 px-8 py-5 flex items-center justify-between sticky top-0 z-50">
@@ -256,7 +268,7 @@ export default function App() {
           <div className="bg-orange-600 p-2.5 rounded-2xl text-white shadow-lg shadow-orange-200"><Settings className="w-7 h-7" /></div>
           <div>
             <h1 className="text-2xl font-black uppercase tracking-tighter text-slate-900 leading-none">TPM <span className="text-orange-600">PRO</span></h1>
-            <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mt-1">Status: Operativo</p>
+            <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mt-1">Status: Conectado</p>
           </div>
         </div>
         <div className="flex items-center gap-8">
@@ -271,16 +283,16 @@ export default function App() {
       </header>
 
       <main className="flex-1 p-6 md:p-12 max-w-7xl mx-auto w-full">
-        {currentUser?.role === Role.OPERATOR && <OperatorView user={currentUser} machines={machines} setMachines={persistMachines} setRecords={(r: any) => { setRecords(r); setDB(STORAGE_KEYS.RECORDS, r); }} records={records} />}
-        {currentUser?.role === Role.LEADER && <LeaderView user={currentUser} machines={machines} setMachines={persistMachines} setRecords={(r: any) => { setRecords(r); setDB(STORAGE_KEYS.RECORDS, r); }} records={records} />}
-        {currentUser?.role === Role.MANAGER && <ManagerView users={users} setUsers={persistUsers} machines={machines} setMachines={persistMachines} records={records} seedDB={seedDB} />}
+        {currentUser?.role === Role.OPERATOR && <OperatorView user={currentUser} machines={machines} records={records} />}
+        {currentUser?.role === Role.LEADER && <LeaderView user={currentUser} machines={machines} records={records} />}
+        {currentUser?.role === Role.MANAGER && <ManagerView users={users} machines={machines} records={records} />}
       </main>
     </div>
   );
 }
 
 // --- OPERATOR VIEW ---
-const OperatorView: React.FC<{ user: User; machines: Machine[]; setMachines: any; setRecords: any; records: MaintenanceRecord[] }> = ({ user, machines, setMachines, setRecords, records }) => {
+const OperatorView: React.FC<{ user: User; machines: Machine[]; records: MaintenanceRecord[] }> = ({ user, machines, records }) => {
   const [selectedMachine, setSelectedMachine] = useState<Machine | null>(null);
   const [checklist, setChecklist] = useState<boolean[]>(new Array(5).fill(false));
   const [obs, setObs] = useState('');
@@ -290,43 +302,57 @@ const OperatorView: React.FC<{ user: User; machines: Machine[]; setMachines: any
   const myMachines = machines.filter(m => m.assignedTo === user.id);
   const availableMachines = machines.filter(m => !m.assignedTo);
 
+  // Funciones de DB
+  const updateMachineAssign = async (machineId: string, userId: string) => {
+    await updateDoc(doc(db, "machines", machineId), { assignedTo: userId });
+  };
+
   const requestSignature = () => {
     if (!selectedMachine || checklist.some(c => !c)) return alert("Debe tildar todos los puntos de seguridad.");
     setShowPinModal(true);
   };
 
-  const finalizeManto = (pin: string) => {
-    // VALIDACION DEL PIN (FIRMA DIGITAL)
+  const finalizeManto = async (pin: string) => {
     if (pin !== user.pin) {
-      alert("ERROR DE FIRMA: El PIN ingresado es incorrecto. No se puede certificar.");
+      alert("ERROR DE FIRMA: El PIN ingresado es incorrecto.");
       return;
     }
 
     if (!selectedMachine) return;
 
-    const newRecord: MaintenanceRecord = {
-      id: Math.random().toString(36).substr(2, 9),
-      machineId: selectedMachine.id,
-      userId: user.id,
-      date: new Date().toISOString(),
-      observations: obs,
-      type: MaintenanceType.LIGHT,
-      isIssue: isCritical
-    };
-    const updatedMachines = machines.map(m => m.id === selectedMachine.id ? { ...m, lastMaintenance: new Date().toISOString() } : m);
-    setMachines(updatedMachines);
-    setRecords([...records, newRecord]);
-    setSelectedMachine(null);
-    setIsCritical(false);
-    setObs('');
-    setShowPinModal(false);
-    alert("Firma Válida. Tarea registrada y certificada correctamente.");
+    try {
+      // 1. Crear el registro en Firestore
+      await addDoc(collection(db, "records"), {
+        machineId: selectedMachine.id,
+        userId: user.id,
+        date: new Date().toISOString(),
+        observations: obs,
+        type: MaintenanceType.LIGHT,
+        isIssue: isCritical
+      });
+
+      // 2. Actualizar la máquina
+      await updateDoc(doc(db, "machines", selectedMachine.id), {
+        lastMaintenance: new Date().toISOString()
+      });
+
+      // Reset UI
+      setSelectedMachine(null);
+      setIsCritical(false);
+      setObs('');
+      setChecklist(new Array(5).fill(false));
+      setShowPinModal(false);
+      alert("Tarea sincronizada con la nube.");
+    } catch (e) {
+      console.error(e);
+      alert("Error al guardar en la nube.");
+    }
   };
 
   if (selectedMachine) {
     return (
       <Card className="max-w-2xl mx-auto border-orange-200 shadow-orange-100 relative">
-        <PinModal isOpen={showPinModal} onClose={() => setShowPinModal(false)} onConfirm={finalizeManto} title="Confirme su identidad para certificar la tarea" />
+        <PinModal isOpen={showPinModal} onClose={() => setShowPinModal(false)} onConfirm={finalizeManto} title="Confirme su identidad para certificar" />
         
         <button onClick={() => setSelectedMachine(null)} className="text-[10px] font-black uppercase text-orange-600 mb-8 flex items-center gap-2 tracking-widest">← Volver a Mis Equipos</button>
         <div className="mb-8">
@@ -396,7 +422,7 @@ const OperatorView: React.FC<{ user: User; machines: Machine[]; setMachines: any
           <h3 className="text-xl font-black text-slate-800 uppercase flex items-center gap-3"><Plus className="text-orange-600" /> Equipos Libres en Planta</h3>
           <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6">
             {availableMachines.map(m => (
-              <div key={m.id} onClick={() => setMachines(machines.map(mac => mac.id === m.id ? {...mac, assignedTo: user.id} : mac))} className="bg-white p-6 rounded-3xl border border-slate-100 cursor-pointer hover:border-orange-500 hover:shadow-2xl transition-all flex flex-col justify-between items-start group">
+              <div key={m.id} onClick={() => updateMachineAssign(m.id, user.id)} className="bg-white p-6 rounded-3xl border border-slate-100 cursor-pointer hover:border-orange-500 hover:shadow-2xl transition-all flex flex-col justify-between items-start group">
                 <div className="flex justify-between w-full mb-4">
                   <div className="bg-slate-50 p-2 rounded-xl text-slate-400 group-hover:text-orange-600 transition-colors"><HardDrive className="w-5 h-5" /></div>
                   <UserPlus className="w-5 h-5 text-slate-200 group-hover:text-orange-400 transition-all" />
@@ -413,11 +439,10 @@ const OperatorView: React.FC<{ user: User; machines: Machine[]; setMachines: any
 };
 
 // --- LEADER VIEW ---
-const LeaderView: React.FC<{ user: User; machines: Machine[]; setMachines: any; setRecords: any; records: MaintenanceRecord[] }> = ({ user, machines, setMachines, setRecords, records }) => {
+const LeaderView: React.FC<{ user: User; machines: Machine[]; records: MaintenanceRecord[] }> = ({ user, machines, records }) => {
   const [closingIssue, setClosingIssue] = useState<MaintenanceRecord | null>(null);
   const [closingComment, setClosingComment] = useState('');
   
-  // Estado para mantenimiento del Líder
   const [selectedMachine, setSelectedMachine] = useState<Machine | null>(null);
   const [checklist, setChecklist] = useState<boolean[]>(new Array(5).fill(false));
   const [mantoObs, setMantoObs] = useState('');
@@ -426,72 +451,64 @@ const LeaderView: React.FC<{ user: User; machines: Machine[]; setMachines: any; 
   const issues = records.filter(r => r.isIssue);
   const myMachines = machines.filter(m => m.assignedTo === user.id);
 
-  // --- LOGICA CIERRE DE ALERTA ---
-  const handleCloseIssue = () => {
-    if(!closingComment) return alert("Debe ingresar un comentario técnico sobre la solución.");
-    const updatedRecords = records.map(r => 
-      r.id === closingIssue?.id 
-      ? { ...r, isIssue: false, observations: r.observations + ` | SOLUCIÓN LÍDER: ${closingComment}` } 
-      : r
-    );
-    setRecords(updatedRecords);
+  const handleCloseIssue = async () => {
+    if(!closingComment) return alert("Debe ingresar un comentario técnico.");
+    if(!closingIssue) return;
+    
+    await updateDoc(doc(db, "records", closingIssue.id), {
+      isIssue: false,
+      observations: closingIssue.observations + ` | SOLUCIÓN LÍDER: ${closingComment}`
+    });
+
     setClosingIssue(null);
     setClosingComment('');
-    alert("Incidencia cerrada y archivada.");
+    alert("Incidencia cerrada en la nube.");
   };
 
   const requestLeaderSignature = () => {
-    if (!selectedMachine || checklist.some(c => !c)) return alert("Debe completar todo el checklist de seguridad avanzada.");
+    if (!selectedMachine || checklist.some(c => !c)) return alert("Checklist incompleto.");
     setShowPinModal(true);
   };
 
-  // --- LOGICA MANTENIMIENTO LIDER ---
-  const finalizeLeaderManto = (pin: string) => {
-    // VALIDACION PIN
+  const finalizeLeaderManto = async (pin: string) => {
     if (pin !== user.pin) {
-      alert("ERROR DE FIRMA: Credenciales de Liderazgo inválidas.");
+      alert("ERROR: Credenciales inválidas.");
       return;
     }
-
     if (!selectedMachine) return;
-    
-    // Guardamos el registro
-    const newRecord: MaintenanceRecord = {
-      id: Math.random().toString(36).substr(2, 9),
-      machineId: selectedMachine.id,
-      userId: user.id,
-      date: new Date().toISOString(),
-      observations: `MANTENIMIENTO PROFUNDO: ${mantoObs}`,
-      type: MaintenanceType.HEAVY, 
-      isIssue: false
-    };
 
-    // Actualizamos la fecha de la máquina
-    const updatedMachines = machines.map(m => m.id === selectedMachine.id ? { ...m, lastMaintenance: new Date().toISOString() } : m);
-    
-    setMachines(updatedMachines);
-    setRecords([...records, newRecord]);
-    
-    // Reset
-    setSelectedMachine(null);
-    setChecklist(new Array(5).fill(false));
-    setMantoObs('');
-    setShowPinModal(false);
-    alert("Mantenimiento Especializado Certificado por Firma Digital.");
+    try {
+      await addDoc(collection(db, "records"), {
+        machineId: selectedMachine.id,
+        userId: user.id,
+        date: new Date().toISOString(),
+        observations: `MANTENIMIENTO PROFUNDO: ${mantoObs}`,
+        type: MaintenanceType.HEAVY, 
+        isIssue: false
+      });
+
+      await updateDoc(doc(db, "machines", selectedMachine.id), {
+        lastMaintenance: new Date().toISOString()
+      });
+      
+      setSelectedMachine(null);
+      setChecklist(new Array(5).fill(false));
+      setMantoObs('');
+      setShowPinModal(false);
+      alert("Mantenimiento Experto sincronizado.");
+    } catch(e) { console.error(e); }
   };
 
-  // --- VISTA FORMULARIO DE MANTENIMIENTO (LIDER) ---
   if (selectedMachine) {
     return (
       <Card className="max-w-2xl mx-auto border-amber-600 shadow-amber-100/50 relative">
         <PinModal isOpen={showPinModal} onClose={() => setShowPinModal(false)} onConfirm={finalizeLeaderManto} title="Firma de Responsable Técnico" />
-
+        {/* ... (UI del formulario igual) ... */}
         <button onClick={() => setSelectedMachine(null)} className="text-[10px] font-black uppercase text-amber-700 mb-8 flex items-center gap-2 tracking-widest">← Cancelar Operación</button>
         <div className="mb-8">
           <h2 className="text-4xl font-black text-slate-800 uppercase tracking-tighter">{selectedMachine.name}</h2>
           <p className="text-amber-600 font-bold uppercase text-[10px] tracking-widest mt-2">Protocolo Técnico Avanzado (Nivel Líder)</p>
         </div>
-        
         <div className="space-y-4 mb-8">
           {["Desarme de Seguridad", "Lubricación de Ejes Principales", "Calibración de Sensores", "Prueba de Carga Máxima", "Limpieza Profunda de Motor"].map((t, i) => (
             <label key={i} className={`flex items-center gap-5 p-6 rounded-3xl border-2 cursor-pointer transition-all ${checklist[i] ? 'bg-amber-50 border-amber-600 shadow-inner' : 'bg-white border-slate-100 hover:border-slate-300'}`}>
@@ -500,8 +517,7 @@ const LeaderView: React.FC<{ user: User; machines: Machine[]; setMachines: any; 
             </label>
           ))}
         </div>
-
-        <textarea className="w-full p-6 border-2 border-slate-100 rounded-[2rem] mb-8 h-32 outline-none focus:border-amber-600 font-medium text-lg" placeholder="Detalles técnicos del ajuste..." value={mantoObs} onChange={e => setMantoObs(e.target.value)} />
+        <textarea className="w-full p-6 border-2 border-slate-100 rounded-[2rem] mb-8 h-32 outline-none focus:border-amber-600 font-medium text-lg" placeholder="Detalles técnicos..." value={mantoObs} onChange={e => setMantoObs(e.target.value)} />
         <IndustrialButton variant="secondary" fullWidth onClick={requestLeaderSignature}>Firmar Mantenimiento Experto</IndustrialButton>
       </Card>
     );
@@ -509,11 +525,10 @@ const LeaderView: React.FC<{ user: User; machines: Machine[]; setMachines: any; 
 
   return (
     <div className="space-y-16 relative">
-      {/* MODAL DE CIERRE DE INCIDENCIA */}
       {closingIssue && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
           <Card className="w-full max-w-lg animate-in fade-in zoom-in duration-200">
-            <div className="flex justify-between items-center mb-6">
+             <div className="flex justify-between items-center mb-6">
               <h3 className="text-2xl font-black uppercase text-slate-800">Cierre Técnico</h3>
               <button onClick={() => setClosingIssue(null)}><X className="w-6 h-6 text-slate-400 hover:text-red-500" /></button>
             </div>
@@ -544,7 +559,6 @@ const LeaderView: React.FC<{ user: User; machines: Machine[]; setMachines: any; 
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-12">
-        {/* FALLAS REPORTADAS */}
         <div className="space-y-8">
           <h3 className="text-2xl font-black text-red-600 uppercase flex items-center gap-3"><AlertTriangle className="animate-pulse" /> Alertas de Campo</h3>
           {issues.length === 0 ? (
@@ -568,8 +582,6 @@ const LeaderView: React.FC<{ user: User; machines: Machine[]; setMachines: any; 
             ))
           )}
         </div>
-
-        {/* MIS EQUIPOS PESADOS */}
         <div className="space-y-8">
           <h3 className="text-2xl font-black text-amber-700 uppercase flex items-center gap-3"><HardDrive /> Mis Equipos Asignados</h3>
           {myMachines.length === 0 ? (
@@ -601,105 +613,80 @@ const LeaderView: React.FC<{ user: User; machines: Machine[]; setMachines: any; 
 };
 
 // --- MANAGER VIEW MEJORADA (Business Intelligence) ---
-const ManagerView: React.FC<{ users: User[]; setUsers: any; machines: Machine[]; setMachines: any; records: MaintenanceRecord[]; seedDB: () => void }> = ({ users, setUsers, machines, setMachines, records, seedDB }) => {
+const ManagerView: React.FC<{ users: User[]; machines: Machine[]; records: MaintenanceRecord[] }> = ({ users, machines, records }) => {
   const [activePanel, setActivePanel] = useState<'STATS' | 'HISTORY' | 'MACHINES' | 'USERS'>('STATS');
   
-  // Estados para formularios de alta
-  const [userForm, setUserForm] = useState({ name: '', phone: '', role: Role.OPERATOR, pin: '1234' });
+  const [userForm, setUserForm] = useState({ name: '', phone: '', role: Role.OPERATOR, pin: '1234', email: '' });
   const [machineForm, setMachineForm] = useState({ name: '', interval: 15 });
 
-  // Estados para Filtros de Historial (Auditoría)
   const [historyFilter, setHistoryFilter] = useState({
     userId: 'ALL',
     dateFrom: '',
     dateTo: '',
-    type: 'ALL' // 'ALL' | 'ISSUE' | 'MANTO'
+    type: 'ALL'
   });
 
-  // --- LOGICA DE DATOS Y ESTADISTICAS ---
-
-  // 1. Estado del Parque (Pie Chart)
+  // --- KPI LOGIC ---
   const stats = useMemo(() => {
     const total = machines.length;
     const due = machines.filter(m => isPast(addDays(parseISO(m.lastMaintenance), m.intervalDays))).length;
-    return [
-      { name: 'Operativo', value: total - due, color: '#10b981' }, 
-      { name: 'Vencido / Crítico', value: due, color: '#ef4444' }
-    ];
+    return [{ name: 'Operativo', value: total - due, color: '#10b981' }, { name: 'Vencido / Crítico', value: due, color: '#ef4444' }];
   }, [machines]);
 
-  // 2. Plan vs Ejecución (Bar Chart - Preventivo vs Correctivo)
   const maintenanceTypeStats = useMemo(() => {
     const preventive = records.filter(r => !r.isIssue).length;
     const corrective = records.filter(r => r.isIssue).length;
-    return [
-      { name: 'Preventivo (Plan)', cantidad: preventive },
-      { name: 'Correctivo (Falla)', cantidad: corrective }
-    ];
+    return [{ name: 'Preventivo (Plan)', cantidad: preventive }, { name: 'Correctivo (Falla)', cantidad: corrective }];
   }, [records]);
 
-  // 3. Ranking de Performance (Top 3) - Incluye Operarios y Líderes
   const ranking = useMemo(() => {
-    // Filtramos a todos los que tocan máquinas (Operarios + Líderes)
     const activeStaff = users.filter(u => u.role === Role.OPERATOR || u.role === Role.LEADER);
-    const scores = activeStaff.map(u => {
-      const taskCount = records.filter(r => r.userId === u.id).length;
-      return { ...u, score: taskCount };
-    });
-    // Ordenamos descendente y tomamos los 3 primeros
+    const scores = activeStaff.map(u => ({ ...u, score: records.filter(r => r.userId === u.id).length }));
     return scores.sort((a, b) => b.score - a.score).slice(0, 3);
   }, [users, records]);
 
-  // 4. Lógica de Filtrado para Historial
   const filteredRecords = useMemo(() => {
     return records.filter(r => {
-      // Filtro Usuario
       const matchUser = historyFilter.userId === 'ALL' || r.userId === historyFilter.userId;
-      
-      // Filtro Fechas
       let matchDate = true;
       if (historyFilter.dateFrom && historyFilter.dateTo) {
         const rDate = parseISO(r.date);
-        matchDate = isWithinInterval(rDate, {
-          start: startOfDay(parseISO(historyFilter.dateFrom)),
-          end: endOfDay(parseISO(historyFilter.dateTo))
-        });
+        matchDate = isWithinInterval(rDate, { start: startOfDay(parseISO(historyFilter.dateFrom)), end: endOfDay(parseISO(historyFilter.dateTo)) });
       }
-
-      // Filtro Tipo (Falla vs Manto)
-      const matchType = historyFilter.type === 'ALL' 
-        ? true 
-        : historyFilter.type === 'ISSUE' ? r.isIssue : !r.isIssue;
-
+      const matchType = historyFilter.type === 'ALL' ? true : historyFilter.type === 'ISSUE' ? r.isIssue : !r.isIssue;
       return matchUser && matchDate && matchType;
-    }).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()); // Ordenar mas reciente primero
+    }).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   }, [records, historyFilter]);
 
-
-  // --- HANDLERS (Altas) ---
-  const addUser = (e: React.FormEvent) => {
+  // --- DB WRITES ---
+  const addUser = async (e: React.FormEvent) => {
     e.preventDefault();
-    const newUser: User = { id: 'u' + (users.length + 1), ...userForm };
-    setUsers([...users, newUser]);
-    setUserForm({ name: '', phone: '', role: Role.OPERATOR, pin: '1234' });
-    alert("Colaborador Registrado. PIN por defecto: 1234");
+    if (!userForm.email) return alert("Ingrese un email");
+    try {
+      // SOLO crea el perfil. La cuenta Auth debe crearse manualmente en Firebase Console por ahora
+      await addDoc(collection(db, "users"), { ...userForm }); 
+      setUserForm({ name: '', phone: '', role: Role.OPERATOR, pin: '1234', email: '' });
+      alert("Perfil creado en la base de datos. IMPORTANTE: Ahora vaya a Firebase Console > Authentication y cree el usuario con este email y contraseña para que pueda acceder.");
+    } catch(e) { console.error(e); }
   };
 
-  const addMachine = (e: React.FormEvent) => {
+  const addMachine = async (e: React.FormEvent) => {
     e.preventDefault();
-    const mac: Machine = { id: 'm' + (machines.length + 1), name: machineForm.name, intervalDays: machineForm.interval, lastMaintenance: new Date().toISOString(), assignedTo: undefined };
-    setMachines([...machines, mac]);
+    await addDoc(collection(db, "machines"), { name: machineForm.name, intervalDays: machineForm.interval, lastMaintenance: new Date().toISOString(), assignedTo: undefined });
     setMachineForm({ name: '', interval: 15 });
-    alert("Activo Registrado.");
+    alert("Activo sincronizado.");
   };
 
-  const updateRole = (uId: string, newRole: Role) => {
-    setUsers(users.map(u => u.id === uId ? { ...u, role: newRole } : u));
+  const updateMachineOwner = async (machineId: string, val: string) => {
+    await updateDoc(doc(db, "machines", machineId), { assignedTo: val === "none" ? undefined : val });
+  };
+
+  const updateUserRole = async (userId: string, newRole: Role) => {
+    await updateDoc(doc(db, "users", userId), { role: newRole });
   };
 
   return (
     <div className="space-y-12">
-      {/* HEADER DE NAVEGACION GERENCIAL */}
       <div className="flex flex-col xl:flex-row justify-between items-center gap-8">
         <div>
           <h2 className="text-5xl font-black text-slate-900 uppercase tracking-tighter">Control <span className="text-orange-600">Maestro</span></h2>
@@ -712,34 +699,22 @@ const ManagerView: React.FC<{ users: User[]; setUsers: any; machines: Machine[];
             { id: 'MACHINES', label: 'Activos', icon: HardDrive },
             { id: 'USERS', label: 'Personal', icon: Users }
           ].map(tab => (
-            <button 
-              key={tab.id}
-              onClick={() => setActivePanel(tab.id as any)}
-              className={`px-6 py-3 rounded-2xl font-black text-[10px] uppercase transition-all tracking-widest flex items-center gap-2 whitespace-nowrap ${activePanel === tab.id ? 'bg-orange-600 text-white shadow-lg shadow-orange-200' : 'text-slate-400 hover:text-orange-500'}`}
-            >
+            <button key={tab.id} onClick={() => setActivePanel(tab.id as any)} className={`px-6 py-3 rounded-2xl font-black text-[10px] uppercase transition-all tracking-widest flex items-center gap-2 whitespace-nowrap ${activePanel === tab.id ? 'bg-orange-600 text-white shadow-lg shadow-orange-200' : 'text-slate-400 hover:text-orange-500'}`}>
               <tab.icon className="w-4 h-4" /> {tab.label}
             </button>
           ))}
         </div>
       </div>
 
-      {/* --- PANEL 1: DASHBOARD DE KPIS --- */}
       {activePanel === 'STATS' && (
         <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
-          
-          {/* PRIMERA FILA: RANKING Y ESTADO */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-            {/* RANKING PODIO */}
             <Card className="lg:col-span-2 bg-gradient-to-br from-slate-900 to-slate-800 text-white border-none shadow-slate-400/50 relative overflow-hidden">
               <div className="absolute top-0 right-0 p-8 opacity-10"><Trophy className="w-48 h-48" /></div>
               <h3 className="text-xl font-black uppercase mb-8 flex items-center gap-3 relative z-10"><Trophy className="text-yellow-400" /> Top Performance (Mes Actual)</h3>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 items-end relative z-10">
                 {ranking.map((u, index) => {
-                  const styles = [
-                    "bg-yellow-400 text-yellow-900 border-yellow-300 h-48", // 1st
-                    "bg-slate-300 text-slate-900 border-slate-200 h-40",   // 2nd
-                    "bg-orange-400 text-orange-900 border-orange-300 h-32"  // 3rd
-                  ];
+                  const styles = ["bg-yellow-400 text-yellow-900 border-yellow-300 h-48", "bg-slate-300 text-slate-900 border-slate-200 h-40", "bg-orange-400 text-orange-900 border-orange-300 h-32"];
                   return (
                     <div key={u.id} className={`${styles[index]} p-5 rounded-3xl flex flex-col justify-between border-t-4 shadow-xl transform hover:-translate-y-2 transition-transform`}>
                       <div className="text-right font-black text-4xl opacity-50">#{index + 1}</div>
@@ -753,43 +728,16 @@ const ManagerView: React.FC<{ users: User[]; setUsers: any; machines: Machine[];
                 })}
               </div>
             </Card>
-
-            {/* GRAFICO DE TORTA (ESTADO) */}
             <Card className="flex flex-col items-center justify-center">
               <h3 className="text-lg font-black uppercase text-slate-700 w-full text-center mb-4">Salud del Parque</h3>
-              <div className="h-[200px] w-full">
-                <ResponsiveContainer>
-                  <PieChart>
-                    <Pie data={stats} cx="50%" cy="50%" innerRadius={60} outerRadius={80} paddingAngle={5} dataKey="value">
-                      {stats.map((e, i) => <Cell key={i} fill={e.color} strokeWidth={0} />)}
-                    </Pie>
-                    <Tooltip contentStyle={{borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)'}} />
-                    <Legend verticalAlign="bottom" />
-                  </PieChart>
-                </ResponsiveContainer>
-              </div>
+              <div className="h-[200px] w-full"><ResponsiveContainer><PieChart><Pie data={stats} cx="50%" cy="50%" innerRadius={60} outerRadius={80} paddingAngle={5} dataKey="value">{stats.map((e, i) => <Cell key={i} fill={e.color} strokeWidth={0} />)}</Pie><Tooltip contentStyle={{borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)'}} /><Legend verticalAlign="bottom" /></PieChart></ResponsiveContainer></div>
             </Card>
           </div>
-
-          {/* SEGUNDA FILA: BARRAS Y LISTA DETALLADA */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-            {/* GRAFICO DE BARRAS (PLAN VS EJECUCION) */}
             <Card>
               <h3 className="text-xl font-black uppercase text-slate-700 border-b pb-6 mb-8 flex items-center gap-3"><BarChart3 className="text-orange-600" /> Plan vs. Incidencias</h3>
-              <div className="h-[300px] w-full">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={maintenanceTypeStats}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                    <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fontSize: 10, fontWeight: 'bold', fill: '#94a3b8'}} />
-                    <YAxis axisLine={false} tickLine={false} tick={{fontSize: 10, fontWeight: 'bold', fill: '#94a3b8'}} />
-                    <Tooltip cursor={{fill: '#f8fafc'}} contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'}} />
-                    <Bar dataKey="cantidad" fill="#f97316" radius={[10, 10, 0, 0]} barSize={60} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
+              <div className="h-[300px] w-full"><ResponsiveContainer width="100%" height="100%"><BarChart data={maintenanceTypeStats}><CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" /><XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fontSize: 10, fontWeight: 'bold', fill: '#94a3b8'}} /><YAxis axisLine={false} tickLine={false} tick={{fontSize: 10, fontWeight: 'bold', fill: '#94a3b8'}} /><Tooltip cursor={{fill: '#f8fafc'}} contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'}} /><Bar dataKey="cantidad" fill="#f97316" radius={[10, 10, 0, 0]} barSize={60} /></BarChart></ResponsiveContainer></div>
             </Card>
-
-            {/* LISTA DE PRODUCTIVIDAD (AHORA INCLUYE LIDERES) */}
             <Card>
               <h3 className="text-xl font-black uppercase text-slate-700 border-b pb-6 mb-8 flex items-center gap-3"><Users className="text-orange-600" /> Productividad Mensual</h3>
               <div className="space-y-4 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
@@ -797,16 +745,8 @@ const ManagerView: React.FC<{ users: User[]; setUsers: any; machines: Machine[];
                   const count = records.filter(r => r.userId === u.id && isSameMonth(parseISO(r.date), startOfMonth(new Date()))).length;
                   return (
                     <div key={u.id} className="flex justify-between items-center p-4 bg-slate-50 rounded-2xl border border-slate-100 hover:border-orange-300 transition-colors">
-                      <div>
-                        <span className="font-black text-slate-800 uppercase text-xs tracking-tight block">{u.name}</span>
-                        <span className={`text-[9px] font-bold uppercase ${u.role === Role.LEADER ? 'text-amber-600' : 'text-slate-400'}`}>
-                          {u.role === Role.LEADER ? 'Resp. Mantenimiento' : 'Operario Línea'}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-3">
-                        <span className="bg-white shadow-sm px-3 py-1 rounded-lg text-[10px] font-black uppercase text-orange-600 border border-orange-100">{count} Tareas</span>
-                        <MessageSquare className="w-5 h-5 text-emerald-500 cursor-pointer hover:scale-110 transition-transform" onClick={() => window.open(`https://wa.me/${u.phone}`)} />
-                      </div>
+                      <div><span className="font-black text-slate-800 uppercase text-xs tracking-tight block">{u.name}</span><span className={`text-[9px] font-bold uppercase ${u.role === Role.LEADER ? 'text-amber-600' : 'text-slate-400'}`}>{u.role === Role.LEADER ? 'Resp. Mantenimiento' : 'Operario Línea'}</span></div>
+                      <div className="flex items-center gap-3"><span className="bg-white shadow-sm px-3 py-1 rounded-lg text-[10px] font-black uppercase text-orange-600 border border-orange-100">{count} Tareas</span><MessageSquare className="w-5 h-5 text-emerald-500 cursor-pointer hover:scale-110 transition-transform" onClick={() => window.open(`https://wa.me/${u.phone}`)} /></div>
                     </div>
                   );
                 })}
@@ -816,54 +756,21 @@ const ManagerView: React.FC<{ users: User[]; setUsers: any; machines: Machine[];
         </div>
       )}
 
-      {/* --- PANEL 2: AUDITORÍA E HISTORIAL (NUEVO) --- */}
       {activePanel === 'HISTORY' && (
         <div className="space-y-8 animate-in fade-in zoom-in duration-300">
-           {/* BARRA DE FILTROS */}
            <Card className="bg-slate-900 text-white border-none shadow-2xl shadow-slate-400/20">
               <div className="flex flex-col md:flex-row gap-6 items-end">
-                 <div className="w-full md:w-1/4 space-y-2">
-                    <label className="text-[10px] font-black uppercase text-slate-400 flex gap-2"><Calendar className="w-3 h-3"/> Desde</label>
-                    <input type="date" className="w-full bg-slate-800 border border-slate-700 rounded-xl p-3 text-sm font-bold outline-none focus:border-orange-500 text-white" 
-                      value={historyFilter.dateFrom} onChange={e => setHistoryFilter({...historyFilter, dateFrom: e.target.value})} />
-                 </div>
-                 <div className="w-full md:w-1/4 space-y-2">
-                    <label className="text-[10px] font-black uppercase text-slate-400 flex gap-2"><Calendar className="w-3 h-3"/> Hasta</label>
-                    <input type="date" className="w-full bg-slate-800 border border-slate-700 rounded-xl p-3 text-sm font-bold outline-none focus:border-orange-500 text-white" 
-                      value={historyFilter.dateTo} onChange={e => setHistoryFilter({...historyFilter, dateTo: e.target.value})} />
-                 </div>
-                 <div className="w-full md:w-1/4 space-y-2">
-                    <label className="text-[10px] font-black uppercase text-slate-400 flex gap-2"><UserCog className="w-3 h-3"/> Empleado</label>
-                    <select className="w-full bg-slate-800 border border-slate-700 rounded-xl p-3 text-sm font-bold outline-none focus:border-orange-500 text-white cursor-pointer appearance-none"
-                      value={historyFilter.userId} onChange={e => setHistoryFilter({...historyFilter, userId: e.target.value})}>
-                        <option value="ALL">Todos los Usuarios</option>
-                        {users.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
-                    </select>
-                 </div>
-                 <div className="w-full md:w-1/4 space-y-2">
-                    <label className="text-[10px] font-black uppercase text-slate-400 flex gap-2"><Filter className="w-3 h-3"/> Tipo Registro</label>
-                    <select className="w-full bg-slate-800 border border-slate-700 rounded-xl p-3 text-sm font-bold outline-none focus:border-orange-500 text-white cursor-pointer appearance-none"
-                      value={historyFilter.type} onChange={e => setHistoryFilter({...historyFilter, type: e.target.value})}>
-                        <option value="ALL">Todo (Fallas + Manto)</option>
-                        <option value="MANTO">Solo Mantenimientos</option>
-                        <option value="ISSUE">Solo Averías/Fallas</option>
-                    </select>
-                 </div>
+                 <div className="w-full md:w-1/4 space-y-2"><label className="text-[10px] font-black uppercase text-slate-400 flex gap-2"><Calendar className="w-3 h-3"/> Desde</label><input type="date" className="w-full bg-slate-800 border border-slate-700 rounded-xl p-3 text-sm font-bold outline-none focus:border-orange-500 text-white" value={historyFilter.dateFrom} onChange={e => setHistoryFilter({...historyFilter, dateFrom: e.target.value})} /></div>
+                 <div className="w-full md:w-1/4 space-y-2"><label className="text-[10px] font-black uppercase text-slate-400 flex gap-2"><Calendar className="w-3 h-3"/> Hasta</label><input type="date" className="w-full bg-slate-800 border border-slate-700 rounded-xl p-3 text-sm font-bold outline-none focus:border-orange-500 text-white" value={historyFilter.dateTo} onChange={e => setHistoryFilter({...historyFilter, dateTo: e.target.value})} /></div>
+                 <div className="w-full md:w-1/4 space-y-2"><label className="text-[10px] font-black uppercase text-slate-400 flex gap-2"><UserCog className="w-3 h-3"/> Empleado</label><select className="w-full bg-slate-800 border border-slate-700 rounded-xl p-3 text-sm font-bold outline-none focus:border-orange-500 text-white cursor-pointer appearance-none" value={historyFilter.userId} onChange={e => setHistoryFilter({...historyFilter, userId: e.target.value})}><option value="ALL">Todos los Usuarios</option>{users.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}</select></div>
+                 <div className="w-full md:w-1/4 space-y-2"><label className="text-[10px] font-black uppercase text-slate-400 flex gap-2"><Filter className="w-3 h-3"/> Tipo Registro</label><select className="w-full bg-slate-800 border border-slate-700 rounded-xl p-3 text-sm font-bold outline-none focus:border-orange-500 text-white cursor-pointer appearance-none" value={historyFilter.type} onChange={e => setHistoryFilter({...historyFilter, type: e.target.value})}><option value="ALL">Todo (Fallas + Manto)</option><option value="MANTO">Solo Mantenimientos</option><option value="ISSUE">Solo Averías/Fallas</option></select></div>
               </div>
            </Card>
-
-           {/* TABLA DE RESULTADOS */}
            <Card className="p-0 overflow-hidden border-orange-100">
              <div className="overflow-x-auto">
                <table className="w-full text-left border-collapse">
                  <thead className="bg-orange-50 text-orange-900 text-[10px] font-black uppercase tracking-widest">
-                   <tr>
-                     <th className="p-6">Fecha y Hora</th>
-                     <th className="p-6">Activo / Máquina</th>
-                     <th className="p-6">Responsable</th>
-                     <th className="p-6">Detalle / Observación</th>
-                     <th className="p-6 text-center">Tipo</th>
-                   </tr>
+                   <tr><th className="p-6">Fecha y Hora</th><th className="p-6">Activo / Máquina</th><th className="p-6">Responsable</th><th className="p-6">Detalle / Observación</th><th className="p-6 text-center">Tipo</th></tr>
                  </thead>
                  <tbody className="text-xs font-medium text-slate-600">
                    {filteredRecords.length > 0 ? filteredRecords.map(r => {
@@ -871,42 +778,14 @@ const ManagerView: React.FC<{ users: User[]; setUsers: any; machines: Machine[];
                      const machine = machines.find(m => m.id === r.machineId);
                      return (
                        <tr key={r.id} className="border-b border-slate-100 hover:bg-slate-50 transition-colors group">
-                         <td className="p-6 font-bold whitespace-nowrap text-slate-400 group-hover:text-orange-600 transition-colors">
-                            {format(parseISO(r.date), 'dd/MM/yyyy HH:mm')}
-                         </td>
+                         <td className="p-6 font-bold whitespace-nowrap text-slate-400 group-hover:text-orange-600 transition-colors">{format(parseISO(r.date), 'dd/MM/yyyy HH:mm')}</td>
                          <td className="p-6 uppercase font-black text-slate-800">{machine?.name || 'Máquina Eliminada'}</td>
-                         <td className="p-6">
-                            <div className="flex items-center gap-2">
-                              <span className="w-6 h-6 rounded-full bg-slate-200 flex items-center justify-center text-[10px] font-black text-slate-500">
-                                {user?.name.charAt(0)}
-                              </span>
-                              <span className="font-bold">{user?.name}</span>
-                            </div>
-                         </td>
-                         <td className="p-6 italic max-w-xs truncate" title={r.observations}>
-                           {r.observations || <span className="text-slate-300">Sin observaciones</span>}
-                         </td>
-                         <td className="p-6 text-center">
-                           {r.isIssue ? (
-                             <span className="inline-flex items-center gap-1 bg-red-100 text-red-700 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-wider">
-                               <AlertTriangle className="w-3 h-3" /> Falla
-                             </span>
-                           ) : (
-                             <span className="inline-flex items-center gap-1 bg-emerald-100 text-emerald-700 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-wider">
-                               <CheckCircle2 className="w-3 h-3" /> OK
-                             </span>
-                           )}
-                         </td>
+                         <td className="p-6"><div className="flex items-center gap-2"><span className="w-6 h-6 rounded-full bg-slate-200 flex items-center justify-center text-[10px] font-black text-slate-500">{user?.name.charAt(0)}</span><span className="font-bold">{user?.name}</span></div></td>
+                         <td className="p-6 italic max-w-xs truncate" title={r.observations}>{r.observations || <span className="text-slate-300">Sin observaciones</span>}</td>
+                         <td className="p-6 text-center">{r.isIssue ? <span className="inline-flex items-center gap-1 bg-red-100 text-red-700 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-wider"><AlertTriangle className="w-3 h-3" /> Falla</span> : <span className="inline-flex items-center gap-1 bg-emerald-100 text-emerald-700 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-wider"><CheckCircle2 className="w-3 h-3" /> OK</span>}</td>
                        </tr>
                      );
-                   }) : (
-                     <tr>
-                       <td colSpan={5} className="p-12 text-center text-slate-400 font-bold uppercase text-sm">
-                         <Search className="w-8 h-8 mx-auto mb-2 opacity-20"/>
-                         No se encontraron registros con los filtros actuales
-                       </td>
-                     </tr>
-                   )}
+                   }) : <tr><td colSpan={5} className="p-12 text-center text-slate-400 font-bold uppercase text-sm"><Search className="w-8 h-8 mx-auto mb-2 opacity-20"/>No se encontraron registros con los filtros actuales</td></tr>}
                  </tbody>
                </table>
              </div>
@@ -914,40 +793,26 @@ const ManagerView: React.FC<{ users: User[]; setUsers: any; machines: Machine[];
         </div>
       )}
 
-      {/* --- PANEL 3: ACTIVOS (Igual que antes) --- */}
       {activePanel === 'MACHINES' && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-12 animate-in fade-in duration-300">
           <Card className="lg:col-span-1 border-orange-200 bg-orange-50/10">
             <form onSubmit={addMachine} className="space-y-6">
               <h3 className="text-2xl font-black text-slate-800 uppercase tracking-tighter flex items-center gap-3"><Plus className="text-orange-600" /> Registro de Activo</h3>
-              <div className="space-y-2">
-                 <label className="text-[10px] font-black uppercase text-slate-400 ml-2">Nombre Técnico</label>
-                 <input required className="w-full p-5 rounded-2xl border-2 border-slate-100 font-bold outline-none focus:border-orange-500 transition-all shadow-inner" placeholder="Prensa Hidráulica X-10" value={machineForm.name} onChange={e => setMachineForm({...machineForm, name: e.target.value})} />
-              </div>
-              <div className="space-y-2">
-                 <label className="text-[10px] font-black uppercase text-slate-400 ml-2">Ciclo de Servicio (Días)</label>
-                 <input type="number" required className="w-full p-5 rounded-2xl border-2 border-slate-100 font-bold outline-none focus:border-orange-500 transition-all shadow-inner" placeholder="15" value={machineForm.interval} onChange={e => setMachineForm({...machineForm, interval: parseInt(e.target.value)})} />
-              </div>
+              <div className="space-y-2"><label className="text-[10px] font-black uppercase text-slate-400 ml-2">Nombre Técnico</label><input required className="w-full p-5 rounded-2xl border-2 border-slate-100 font-bold outline-none focus:border-orange-500 transition-all shadow-inner" placeholder="Prensa Hidráulica X-10" value={machineForm.name} onChange={e => setMachineForm({...machineForm, name: e.target.value})} /></div>
+              <div className="space-y-2"><label className="text-[10px] font-black uppercase text-slate-400 ml-2">Ciclo de Servicio (Días)</label><input type="number" required className="w-full p-5 rounded-2xl border-2 border-slate-100 font-bold outline-none focus:border-orange-500 transition-all shadow-inner" placeholder="15" value={machineForm.interval} onChange={e => setMachineForm({...machineForm, interval: parseInt(e.target.value)})} /></div>
               <IndustrialButton fullWidth type="submit">Dar de Alta Activo</IndustrialButton>
             </form>
           </Card>
           <div className="lg:col-span-2">
             <Card className="p-0 overflow-hidden">
               <table className="w-full text-left border-collapse">
-                <thead className="bg-slate-900 text-white text-[10px] font-black uppercase tracking-widest">
-                  <tr><th className="p-6">Nombre de Máquina</th><th className="p-6 text-center">Frecuencia</th><th className="p-6">Operario Asignado</th></tr>
-                </thead>
+                <thead className="bg-slate-900 text-white text-[10px] font-black uppercase tracking-widest"><tr><th className="p-6">Nombre de Máquina</th><th className="p-6 text-center">Frecuencia</th><th className="p-6">Operario Asignado</th></tr></thead>
                 <tbody className="text-xs font-bold text-slate-600">
                   {machines.map(m => (
                     <tr key={m.id} className="border-b border-slate-100 hover:bg-slate-50 transition-colors">
                       <td className="p-6 text-slate-900 uppercase font-black tracking-tight">{m.name}</td>
                       <td className="p-6 text-center">{m.intervalDays} días</td>
-                      <td className="p-6">
-                        <select className="bg-white border-2 border-slate-100 p-3 rounded-xl text-[10px] font-black uppercase outline-none focus:border-orange-500 cursor-pointer" value={m.assignedTo || 'none'} onChange={e => setMachines(machines.map(mac => mac.id === m.id ? {...mac, assignedTo: e.target.value === "none" ? undefined : e.target.value} : mac))}>
-                          <option value="none">-- Disponible --</option>
-                          {users.map(u => <option key={u.id} value={u.id}>{u.name} ({u.role.substring(0,3)})</option>)}
-                        </select>
-                      </td>
+                      <td className="p-6"><select className="bg-white border-2 border-slate-100 p-3 rounded-xl text-[10px] font-black uppercase outline-none focus:border-orange-500 cursor-pointer" value={m.assignedTo || 'none'} onChange={e => updateMachineOwner(m.id, e.target.value)}><option value="none">-- Disponible --</option>{users.map(u => <option key={u.id} value={u.id}>{u.name} ({u.role.substring(0,3)})</option>)}</select></td>
                     </tr>
                   ))}
                 </tbody>
@@ -957,24 +822,18 @@ const ManagerView: React.FC<{ users: User[]; setUsers: any; machines: Machine[];
         </div>
       )}
 
-      {/* --- PANEL 4: PERSONAL (Igual que antes) --- */}
       {activePanel === 'USERS' && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-12 animate-in fade-in duration-300">
           <Card className="lg:col-span-1 border-orange-200 bg-orange-50/10">
             <form onSubmit={addUser} className="space-y-6">
               <h3 className="text-2xl font-black text-slate-800 uppercase tracking-tighter flex items-center gap-3"><UserPlus className="text-orange-600" /> Nuevo Colaborador</h3>
+              <div className="bg-orange-100 p-3 rounded-xl text-[10px] text-orange-800 font-medium leading-tight">⚠ Esta acción crea el perfil en la App. Para que el usuario acceda, debe crear su cuenta (email/password) en Firebase Console.</div>
+              <input required className="w-full p-5 rounded-2xl border-2 border-slate-100 font-bold outline-none focus:border-orange-500 transition-all shadow-inner" placeholder="Email Corporativo" value={userForm.email} onChange={e => setUserForm({...userForm, email: e.target.value})} type="email"/>
               <input required className="w-full p-5 rounded-2xl border-2 border-slate-100 font-bold outline-none focus:border-orange-500 transition-all shadow-inner" placeholder="Nombre y Apellido" value={userForm.name} onChange={e => setUserForm({...userForm, name: e.target.value})} />
-              <input className="w-full p-5 rounded-2xl border-2 border-slate-100 font-bold outline-none focus:border-orange-500 transition-all shadow-inner" placeholder="Teléfono (Ej: 549...)" value={userForm.phone} onChange={e => setUserForm({...userForm, phone: e.target.value})} />
-              <div className="space-y-2">
-                 <label className="text-[10px] font-black uppercase text-slate-400 ml-2">Asignar PIN de Seguridad</label>
-                 <input type="password" maxLength={4} className="w-full p-5 rounded-2xl border-2 border-slate-100 font-bold outline-none focus:border-orange-500 transition-all shadow-inner tracking-widest" placeholder="PIN de 4 dígitos" value={userForm.pin} onChange={e => setUserForm({...userForm, pin: e.target.value.replace(/[^0-9]/g, '')})} />
-              </div>
-              <select className="w-full p-5 rounded-2xl border-2 border-slate-100 font-bold outline-none focus:border-orange-500 cursor-pointer shadow-inner" value={userForm.role} onChange={e => setUserForm({...userForm, role: e.target.value as Role})}>
-                <option value={Role.OPERATOR}>OPERARIO DE LÍNEA</option>
-                <option value={Role.LEADER}>RESP. MANTENIMIENTO GRAL.</option>
-                <option value={Role.MANAGER}>GERENCIA Y AUDITORÍA</option>
-              </select>
-              <IndustrialButton fullWidth type="submit">Alta de Usuario</IndustrialButton>
+              <input className="w-full p-5 rounded-2xl border-2 border-slate-100 font-bold outline-none focus:border-orange-500 transition-all shadow-inner" placeholder="Teléfono" value={userForm.phone} onChange={e => setUserForm({...userForm, phone: e.target.value})} />
+              <div className="space-y-2"><label className="text-[10px] font-black uppercase text-slate-400 ml-2">Asignar PIN de Seguridad</label><input type="password" maxLength={4} className="w-full p-5 rounded-2xl border-2 border-slate-100 font-bold outline-none focus:border-orange-500 transition-all shadow-inner tracking-widest" placeholder="PIN" value={userForm.pin} onChange={e => setUserForm({...userForm, pin: e.target.value.replace(/[^0-9]/g, '')})} /></div>
+              <select className="w-full p-5 rounded-2xl border-2 border-slate-100 font-bold outline-none focus:border-orange-500 cursor-pointer shadow-inner" value={userForm.role} onChange={e => setUserForm({...userForm, role: e.target.value as Role})}><option value={Role.OPERATOR}>OPERARIO DE LÍNEA</option><option value={Role.LEADER}>RESP. MANTENIMIENTO GRAL.</option><option value={Role.MANAGER}>GERENCIA Y AUDITORÍA</option></select>
+              <IndustrialButton fullWidth type="submit">Crear Perfil</IndustrialButton>
             </form>
           </Card>
           <div className="lg:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -982,19 +841,9 @@ const ManagerView: React.FC<{ users: User[]; setUsers: any; machines: Machine[];
               <Card key={u.id} className="flex justify-between items-center group border-slate-200 hover:border-orange-400 transition-all">
                 <div className="flex items-center gap-5">
                   <div className="bg-slate-50 p-4 rounded-2xl group-hover:bg-orange-50 group-hover:text-orange-600 transition-colors"><UserCog className="w-6 h-6" /></div>
-                  <div>
-                    <h4 className="font-black text-slate-900 uppercase text-sm tracking-tight">{u.name}</h4>
-                    <span className="text-[9px] font-black text-orange-600 uppercase tracking-widest leading-none">{u.role === Role.LEADER ? 'RESP. MANTO.' : u.role}</span>
-                  </div>
+                  <div><h4 className="font-black text-slate-900 uppercase text-sm tracking-tight">{u.name}</h4><span className="text-[9px] font-black text-orange-600 uppercase tracking-widest leading-none">{u.role === Role.LEADER ? 'RESP. MANTO.' : u.role}</span></div>
                 </div>
-                <div className="flex flex-col gap-2 text-right">
-                  <span className="text-[9px] font-bold text-slate-400 uppercase">PIN: ****</span>
-                  <select className="bg-white border border-slate-100 p-2 rounded-xl text-[9px] font-black uppercase outline-none focus:border-orange-500" value={u.role} onChange={e => updateRole(u.id, e.target.value as Role)}>
-                    <option value={Role.OPERATOR}>OPERARIO</option>
-                    <option value={Role.LEADER}>RESP. MANTO.</option>
-                    <option value={Role.MANAGER}>GERENCIA</option>
-                  </select>
-                </div>
+                <div className="flex flex-col gap-2 text-right"><span className="text-[9px] font-bold text-slate-400 uppercase">PIN: ****</span><select className="bg-white border border-slate-100 p-2 rounded-xl text-[9px] font-black uppercase outline-none focus:border-orange-500" value={u.role} onChange={e => updateUserRole(u.id, e.target.value as Role)}><option value={Role.OPERATOR}>OPERARIO</option><option value={Role.LEADER}>RESP. MANTO.</option><option value={Role.MANAGER}>GERENCIA</option></select></div>
               </Card>
             ))}
           </div>
