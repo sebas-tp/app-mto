@@ -2,8 +2,8 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Users, Settings, BarChart3, CheckCircle2, AlertTriangle, Wrench, LogOut, 
   MessageSquare, ClipboardList, Database, Plus, UserPlus, History, HardDrive, 
-  UserCog, LayoutDashboard, X, Calendar, Filter, Trophy, Search, Lock, Fingerprint, Loader2,
-  Trash2, Pencil // <--- NUEVO ICONO PENCIL
+  UserCog, LayoutDashboard, X, Calendar as CalendarIcon, Filter, Trophy, Search, Lock, Fingerprint, Loader2,
+  Trash2, Pencil, FileSpreadsheet, FileText, ChevronLeft, ChevronRight, Download
 } from 'lucide-react';
 import { 
   PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend,
@@ -11,8 +11,9 @@ import {
 } from 'recharts';
 import { 
   format, addDays, isPast, parseISO, startOfMonth, isSameMonth, 
-  isWithinInterval, startOfDay, endOfDay 
+  isWithinInterval, startOfDay, endOfDay, eachDayOfInterval, endOfMonth, getDay, startOfWeek, endOfWeek, isSameDay, addMonths, subMonths
 } from 'date-fns';
+import { es } from 'date-fns/locale'; // Para calendario en español si se configurara, aqui lo haré manual para no pedir instalar locale
 
 // --- FIREBASE IMPORTS ---
 import { db, auth } from './firebaseConfig'; 
@@ -259,6 +260,7 @@ export default function App() {
   );
 }
 
+// ... OperatorView y LeaderView no cambian, por brevedad ...
 const OperatorView: React.FC<{ user: User; machines: Machine[]; records: MaintenanceRecord[] }> = ({ user, machines, records }) => {
   const [selectedMachine, setSelectedMachine] = useState<Machine | null>(null);
   const [checklist, setChecklist] = useState<boolean[]>(new Array(5).fill(false));
@@ -337,6 +339,7 @@ const LeaderView: React.FC<{ user: User; machines: Machine[]; records: Maintenan
   );
 };
 
+// --- MANAGER VIEW MEJORADA (Calendario y Exportación) ---
 const ManagerView: React.FC<{ users: User[]; machines: Machine[]; records: MaintenanceRecord[] }> = ({ users, machines, records }) => {
   const [activePanel, setActivePanel] = useState<'STATS' | 'HISTORY' | 'MACHINES' | 'USERS'>('STATS');
   const [userForm, setUserForm] = useState({ name: '', phone: '', role: Role.OPERATOR, pin: '1234' });
@@ -345,12 +348,58 @@ const ManagerView: React.FC<{ users: User[]; machines: Machine[]; records: Maint
   
   // ESTADO PARA EDICIÓN DE MÁQUINAS
   const [editingMachineId, setEditingMachineId] = useState<string | null>(null);
+  
+  // ESTADO PARA CALENDARIO
+  const [currentMonth, setCurrentMonth] = useState(new Date());
+  const [selectedDay, setSelectedDay] = useState<Date | null>(null);
 
+  // --- KPI LOGIC ---
   const stats = useMemo(() => { const total = machines.length; const due = machines.filter(m => isPast(addDays(parseISO(m.lastMaintenance), m.intervalDays))).length; return [{ name: 'Operativo', value: total - due, color: '#10b981' }, { name: 'Vencido', value: due, color: '#ef4444' }]; }, [machines]);
   const maintenanceTypeStats = useMemo(() => { const preventive = records.filter(r => !r.isIssue).length; const corrective = records.filter(r => r.isIssue).length; return [{ name: 'Preventivo', cantidad: preventive }, { name: 'Correctivo', cantidad: corrective }]; }, [records]);
   const ranking = useMemo(() => { const activeStaff = users.filter(u => u.role === Role.OPERATOR || u.role === Role.LEADER); return activeStaff.map(u => ({ ...u, score: records.filter(r => r.userId === u.id).length })).sort((a, b) => b.score - a.score).slice(0, 3); }, [users, records]);
   const filteredRecords = useMemo(() => { return records.filter(r => { const matchUser = historyFilter.userId === 'ALL' || r.userId === historyFilter.userId; let matchDate = true; if (historyFilter.dateFrom && historyFilter.dateTo) { matchDate = isWithinInterval(parseISO(r.date), { start: startOfDay(parseISO(historyFilter.dateFrom)), end: endOfDay(parseISO(historyFilter.dateTo)) }); } const matchType = historyFilter.type === 'ALL' ? true : historyFilter.type === 'ISSUE' ? r.isIssue : !r.isIssue; return matchUser && matchDate && matchType; }).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()); }, [records, historyFilter]);
 
+  // --- CALENDAR LOGIC ---
+  const calendarDays = useMemo(() => {
+    return eachDayOfInterval({ start: startOfWeek(startOfMonth(currentMonth)), end: endOfWeek(endOfMonth(currentMonth)) });
+  }, [currentMonth]);
+
+  const getDayStatus = (date: Date) => {
+    const dayRecords = records.filter(r => isSameDay(parseISO(r.date), date));
+    if (dayRecords.some(r => r.isIssue)) return 'issue'; // Red
+    if (dayRecords.length > 0) return 'ok'; // Green
+    return 'none';
+  };
+
+  const dayDetails = selectedDay ? records.filter(r => isSameDay(parseISO(r.date), selectedDay)) : [];
+
+  // --- EXPORT LOGIC ---
+  const exportToCSV = () => {
+    const headers = "Fecha,Hora,Maquina,Usuario,Tipo,Observaciones\n";
+    const rows = filteredRecords.map(r => {
+      const u = users.find(u => u.id === r.userId)?.name || "Desconocido";
+      const m = machines.find(m => m.id === r.machineId)?.name || "Eliminada";
+      const t = r.isIssue ? "FALLA" : "Mantenimiento";
+      // Sanitize observations to remove commas for CSV safety
+      const obs = (r.observations || "").replace(/,/g, " "); 
+      return `${format(parseISO(r.date), 'dd/MM/yyyy')},${format(parseISO(r.date), 'HH:mm')},${m},${u},${t},${obs}`;
+    }).join("\n");
+
+    const blob = new Blob([headers + rows], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement("a");
+    const url = URL.createObjectURL(blob);
+    link.setAttribute("href", url);
+    link.setAttribute("download", `auditoria_mantenimiento_${format(new Date(), 'yyyy-MM-dd')}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const handlePrint = () => {
+    window.print();
+  };
+
+  // --- DB WRITES (MANAGER) ---
   const addUser = async (e: React.FormEvent) => { e.preventDefault(); await addDoc(collection(db, "users"), { ...userForm }); setUserForm({ name: '', phone: '', role: Role.OPERATOR, pin: '1234' }); alert("Usuario creado en nube."); };
   
   const deleteUser = async (userId: string) => {
@@ -362,20 +411,15 @@ const ManagerView: React.FC<{ users: User[]; machines: Machine[]; records: Maint
   const handleMachineSubmit = async (e: React.FormEvent) => { 
     e.preventDefault(); 
     if (editingMachineId) {
-      // MODO ACTUALIZAR
       await updateDoc(doc(db, "machines", editingMachineId), { 
-        name: machineForm.name, 
-        intervalDays: machineForm.interval 
+        name: machineForm.name, intervalDays: machineForm.interval 
       });
       alert("Activo actualizado correctamente.");
       setEditingMachineId(null);
     } else {
-      // MODO CREAR
       await addDoc(collection(db, "machines"), { 
-        name: machineForm.name, 
-        intervalDays: machineForm.interval, 
-        lastMaintenance: new Date().toISOString(), 
-        assignedTo: null 
+        name: machineForm.name, intervalDays: machineForm.interval, 
+        lastMaintenance: new Date().toISOString(), assignedTo: null 
       }); 
       alert("Activo creado en nube."); 
     }
@@ -385,7 +429,6 @@ const ManagerView: React.FC<{ users: User[]; machines: Machine[]; records: Maint
   const handleEditMachine = (m: Machine) => {
     setEditingMachineId(m.id);
     setMachineForm({ name: m.name, interval: m.intervalDays });
-    // Scroll hacia arriba para ver el formulario
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -399,10 +442,123 @@ const ManagerView: React.FC<{ users: User[]; machines: Machine[]; records: Maint
 
   return (
     <div className="space-y-12">
-      <div className="flex flex-col xl:flex-row justify-between items-center gap-8"><div><h2 className="text-5xl font-black text-slate-900 uppercase tracking-tighter">Control <span className="text-orange-600">Maestro</span></h2><p className="text-slate-400 font-bold uppercase text-[10px] tracking-[0.3em] mt-3">Gerencia Técnica • Dashboard Intelligence</p></div><div className="flex bg-white p-2 rounded-[2rem] border border-slate-100 shadow-xl shadow-slate-200/50 overflow-x-auto max-w-full">{[{ id: 'STATS', label: 'KPIs Globales', icon: BarChart3 }, { id: 'HISTORY', label: 'Auditoría', icon: History }, { id: 'MACHINES', label: 'Activos', icon: HardDrive }, { id: 'USERS', label: 'Personal', icon: Users }].map(tab => (<button key={tab.id} onClick={() => setActivePanel(tab.id as any)} className={`px-6 py-3 rounded-2xl font-black text-[10px] uppercase transition-all tracking-widest flex items-center gap-2 whitespace-nowrap ${activePanel === tab.id ? 'bg-orange-600 text-white shadow-lg shadow-orange-200' : 'text-slate-400 hover:text-orange-500'}`}><tab.icon className="w-4 h-4" /> {tab.label}</button>))}</div></div>
+      <div className="flex flex-col xl:flex-row justify-between items-center gap-8 no-print"><div><h2 className="text-5xl font-black text-slate-900 uppercase tracking-tighter">Control <span className="text-orange-600">Maestro</span></h2><p className="text-slate-400 font-bold uppercase text-[10px] tracking-[0.3em] mt-3">Gerencia Técnica • Dashboard Intelligence</p></div><div className="flex bg-white p-2 rounded-[2rem] border border-slate-100 shadow-xl shadow-slate-200/50 overflow-x-auto max-w-full">{[{ id: 'STATS', label: 'KPIs Globales', icon: BarChart3 }, { id: 'HISTORY', label: 'Auditoría', icon: History }, { id: 'MACHINES', label: 'Activos', icon: HardDrive }, { id: 'USERS', label: 'Personal', icon: Users }].map(tab => (<button key={tab.id} onClick={() => setActivePanel(tab.id as any)} className={`px-6 py-3 rounded-2xl font-black text-[10px] uppercase transition-all tracking-widest flex items-center gap-2 whitespace-nowrap ${activePanel === tab.id ? 'bg-orange-600 text-white shadow-lg shadow-orange-200' : 'text-slate-400 hover:text-orange-500'}`}><tab.icon className="w-4 h-4" /> {tab.label}</button>))}</div></div>
       
-      {activePanel === 'STATS' && (<div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500"><div className="grid grid-cols-1 lg:grid-cols-3 gap-8"><Card className="lg:col-span-2 bg-gradient-to-br from-slate-900 to-slate-800 text-white border-none shadow-slate-400/50 relative overflow-hidden"><div className="absolute top-0 right-0 p-8 opacity-10"><Trophy className="w-48 h-48" /></div><h3 className="text-xl font-black uppercase mb-8 flex items-center gap-3 relative z-10"><Trophy className="text-yellow-400" /> Top Performance</h3><div className="grid grid-cols-1 sm:grid-cols-3 gap-4 items-end relative z-10">{ranking.map((u, index) => { const styles = ["bg-yellow-400 text-yellow-900 border-yellow-300 h-48", "bg-slate-300 text-slate-900 border-slate-200 h-40", "bg-orange-400 text-orange-900 border-orange-300 h-32"]; return (<div key={u.id} className={`${styles[index]} p-5 rounded-3xl flex flex-col justify-between border-t-4 shadow-xl transform hover:-translate-y-2 transition-transform`}><div className="text-right font-black text-4xl opacity-50">#{index + 1}</div><div><p className="text-4xl font-black mb-1">{u.score}</p><p className="font-bold uppercase text-xs leading-tight truncate">{u.name}</p><p className="text-[9px] font-black uppercase tracking-widest opacity-60 mt-1">{u.role === Role.LEADER ? 'Líder' : 'Operario'}</p></div></div>); })}</div></Card><Card className="flex flex-col items-center justify-center"><h3 className="text-lg font-black uppercase text-slate-700 w-full text-center mb-4">Salud del Parque</h3><div className="h-[200px] w-full"><ResponsiveContainer><PieChart><Pie data={stats} cx="50%" cy="50%" innerRadius={60} outerRadius={80} paddingAngle={5} dataKey="value">{stats.map((e, i) => <Cell key={i} fill={e.color} strokeWidth={0} />)}</Pie><Tooltip contentStyle={{borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)'}} /><Legend verticalAlign="bottom" /></PieChart></ResponsiveContainer></div></Card></div><div className="grid grid-cols-1 lg:grid-cols-2 gap-8"><Card><h3 className="text-xl font-black uppercase text-slate-700 border-b pb-6 mb-8 flex items-center gap-3"><BarChart3 className="text-orange-600" /> Plan vs. Incidencias</h3><div className="h-[300px] w-full"><ResponsiveContainer width="100%" height="100%"><BarChart data={maintenanceTypeStats}><CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" /><XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fontSize: 10, fontWeight: 'bold', fill: '#94a3b8'}} /><YAxis axisLine={false} tickLine={false} tick={{fontSize: 10, fontWeight: 'bold', fill: '#94a3b8'}} /><Tooltip cursor={{fill: '#f8fafc'}} contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'}} /><Bar dataKey="cantidad" fill="#f97316" radius={[10, 10, 0, 0]} barSize={60} /></BarChart></ResponsiveContainer></div></Card><Card><h3 className="text-xl font-black uppercase text-slate-700 border-b pb-6 mb-8 flex items-center gap-3"><Users className="text-orange-600" /> Productividad Mensual</h3><div className="space-y-4 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">{users.filter(u => u.role === Role.OPERATOR || u.role === Role.LEADER).map(u => { const count = records.filter(r => r.userId === u.id && isSameMonth(parseISO(r.date), startOfMonth(new Date()))).length; return (<div key={u.id} className="flex justify-between items-center p-4 bg-slate-50 rounded-2xl border border-slate-100 hover:border-orange-300 transition-colors"><div><span className="font-black text-slate-800 uppercase text-xs tracking-tight block">{u.name}</span><span className={`text-[9px] font-bold uppercase ${u.role === Role.LEADER ? 'text-amber-600' : 'text-slate-400'}`}>{u.role === Role.LEADER ? 'Resp. Mantenimiento' : 'Operario Línea'}</span></div><div className="flex items-center gap-3"><span className="bg-white shadow-sm px-3 py-1 rounded-lg text-[10px] font-black uppercase text-orange-600 border border-orange-100">{count} Tareas</span><MessageSquare className="w-5 h-5 text-emerald-500 cursor-pointer hover:scale-110 transition-transform" onClick={() => window.open(`https://wa.me/${u.phone}`)} /></div></div>); })}</div></Card></div></div>)}
-      {activePanel === 'HISTORY' && (<div className="space-y-8 animate-in fade-in zoom-in duration-300"><Card className="bg-slate-900 text-white border-none shadow-2xl shadow-slate-400/20"><div className="flex flex-col md:flex-row gap-6 items-end"><div className="w-full md:w-1/4 space-y-2"><label className="text-[10px] font-black uppercase text-slate-400 flex gap-2"><Calendar className="w-3 h-3"/> Desde</label><input type="date" className="w-full bg-slate-800 border border-slate-700 rounded-xl p-3 text-sm font-bold outline-none focus:border-orange-500 text-white" value={historyFilter.dateFrom} onChange={e => setHistoryFilter({...historyFilter, dateFrom: e.target.value})} /></div><div className="w-full md:w-1/4 space-y-2"><label className="text-[10px] font-black uppercase text-slate-400 flex gap-2"><Calendar className="w-3 h-3"/> Hasta</label><input type="date" className="w-full bg-slate-800 border border-slate-700 rounded-xl p-3 text-sm font-bold outline-none focus:border-orange-500 text-white" value={historyFilter.dateTo} onChange={e => setHistoryFilter({...historyFilter, dateTo: e.target.value})} /></div><div className="w-full md:w-1/4 space-y-2"><label className="text-[10px] font-black uppercase text-slate-400 flex gap-2"><UserCog className="w-3 h-3"/> Empleado</label><select className="w-full bg-slate-800 border border-slate-700 rounded-xl p-3 text-sm font-bold outline-none focus:border-orange-500 text-white cursor-pointer appearance-none" value={historyFilter.userId} onChange={e => setHistoryFilter({...historyFilter, userId: e.target.value})}><option value="ALL">Todos los Usuarios</option>{users.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}</select></div><div className="w-full md:w-1/4 space-y-2"><label className="text-[10px] font-black uppercase text-slate-400 flex gap-2"><Filter className="w-3 h-3"/> Tipo Registro</label><select className="w-full bg-slate-800 border border-slate-700 rounded-xl p-3 text-sm font-bold outline-none focus:border-orange-500 text-white cursor-pointer appearance-none" value={historyFilter.type} onChange={e => setHistoryFilter({...historyFilter, type: e.target.value})}><option value="ALL">Todo</option><option value="MANTO">Mantenimientos</option><option value="ISSUE">Fallas</option></select></div></div></Card><Card className="p-0 overflow-hidden border-orange-100"><div className="overflow-x-auto"><table className="w-full text-left border-collapse"><thead className="bg-orange-50 text-orange-900 text-[10px] font-black uppercase tracking-widest"><tr><th className="p-6">Fecha</th><th className="p-6">Máquina</th><th className="p-6">Responsable</th><th className="p-6">Detalle</th><th className="p-6 text-center">Tipo</th></tr></thead><tbody className="text-xs font-medium text-slate-600">{filteredRecords.length > 0 ? filteredRecords.map(r => { const user = users.find(u => u.id === r.userId); const machine = machines.find(m => m.id === r.machineId); return (<tr key={r.id} className="border-b border-slate-100 hover:bg-slate-50 transition-colors group"><td className="p-6 font-bold whitespace-nowrap text-slate-400 group-hover:text-orange-600 transition-colors">{format(parseISO(r.date), 'dd/MM/yyyy HH:mm')}</td><td className="p-6 uppercase font-black text-slate-800">{machine?.name || 'Máquina Eliminada'}</td><td className="p-6"><div className="flex items-center gap-2"><span className="w-6 h-6 rounded-full bg-slate-200 flex items-center justify-center text-[10px] font-black text-slate-500">{user?.name.charAt(0)}</span><span className="font-bold">{user?.name}</span></div></td><td className="p-6 italic max-w-xs truncate" title={r.observations}>{r.observations || <span className="text-slate-300">-</span>}</td><td className="p-6 text-center">{r.isIssue ? <span className="inline-flex items-center gap-1 bg-red-100 text-red-700 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-wider">Falla</span> : <span className="inline-flex items-center gap-1 bg-emerald-100 text-emerald-700 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-wider">OK</span>}</td></tr>); }) : <tr><td colSpan={5} className="p-12 text-center text-slate-400 font-bold uppercase text-sm">Sin registros</td></tr>}</tbody></table></div></Card></div>)}
+      {activePanel === 'STATS' && (<div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+        
+        {/* CALENDARIO DE CUMPLIMIENTO */}
+        <Card>
+          <div className="flex justify-between items-center mb-6">
+            <h3 className="text-xl font-black uppercase flex items-center gap-3"><CalendarIcon className="text-orange-600" /> Calendario de Cumplimiento</h3>
+            <div className="flex gap-2">
+              <button onClick={() => setCurrentMonth(subMonths(currentMonth, 1))} className="p-2 hover:bg-slate-100 rounded-full"><ChevronLeft className="w-5 h-5"/></button>
+              <span className="font-black uppercase text-sm py-2 px-4 bg-slate-50 rounded-xl">{format(currentMonth, 'MMMM yyyy')}</span>
+              <button onClick={() => setCurrentMonth(addMonths(currentMonth, 1))} className="p-2 hover:bg-slate-100 rounded-full"><ChevronRight className="w-5 h-5"/></button>
+            </div>
+          </div>
+          
+          <div className="grid grid-cols-7 gap-2 mb-2">
+            {['Do','Lu','Ma','Mi','Ju','Vi','Sa'].map(d => <div key={d} className="text-center text-[10px] font-black text-slate-400 uppercase">{d}</div>)}
+          </div>
+          <div className="grid grid-cols-7 gap-2">
+            {calendarDays.map((day, idx) => {
+              const status = getDayStatus(day);
+              const isCurrentMonth = isSameMonth(day, currentMonth);
+              return (
+                <div 
+                  key={idx} 
+                  onClick={() => setSelectedDay(day)}
+                  className={`
+                    h-16 rounded-xl border-2 flex flex-col items-center justify-center cursor-pointer transition-all hover:scale-105
+                    ${!isCurrentMonth ? 'opacity-30' : ''}
+                    ${selectedDay && isSameDay(day, selectedDay) ? 'border-orange-500 shadow-md ring-2 ring-orange-200' : 'border-slate-50'}
+                    ${status === 'issue' ? 'bg-red-50 border-red-200' : status === 'ok' ? 'bg-emerald-50 border-emerald-200' : 'bg-white'}
+                  `}
+                >
+                  <span className="text-sm font-bold text-slate-700">{format(day, 'd')}</span>
+                  {status === 'issue' && <div className="w-2 h-2 rounded-full bg-red-500 mt-1"></div>}
+                  {status === 'ok' && <div className="w-2 h-2 rounded-full bg-emerald-500 mt-1"></div>}
+                </div>
+              );
+            })}
+          </div>
+
+          {/* DETALLES DEL DÍA SELECCIONADO */}
+          {selectedDay && (
+            <div className="mt-8 pt-8 border-t border-slate-100 animate-in fade-in slide-in-from-top-2">
+              <h4 className="font-black uppercase text-sm text-slate-500 mb-4">Detalle del {format(selectedDay, 'dd/MM/yyyy')}</h4>
+              {dayDetails.length > 0 ? (
+                <div className="space-y-3">
+                  {dayDetails.map(r => (
+                    <div key={r.id} className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                      <div>
+                        <p className="font-black text-slate-800 text-xs uppercase">{machines.find(m => m.id === r.machineId)?.name}</p>
+                        <p className="text-[10px] text-slate-400 font-bold">{users.find(u => u.id === r.userId)?.name}</p>
+                      </div>
+                      {r.isIssue ? <span className="bg-red-100 text-red-700 text-[9px] font-black px-2 py-1 rounded-md uppercase">Falla</span> : <span className="bg-emerald-100 text-emerald-700 text-[9px] font-black px-2 py-1 rounded-md uppercase">OK</span>}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-center text-slate-400 text-xs italic">No hubo actividad registrada este día.</p>
+              )}
+            </div>
+          )}
+        </Card>
+
+        {/* RESTO DE LOS KPIS */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+          <Card><h3 className="text-xl font-black uppercase text-slate-700 border-b pb-6 mb-8 flex items-center gap-3"><BarChart3 className="text-orange-600" /> Plan vs. Incidencias</h3><div className="h-[300px] w-full"><ResponsiveContainer width="100%" height="100%"><BarChart data={maintenanceTypeStats}><CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" /><XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fontSize: 10, fontWeight: 'bold', fill: '#94a3b8'}} /><YAxis axisLine={false} tickLine={false} tick={{fontSize: 10, fontWeight: 'bold', fill: '#94a3b8'}} /><Tooltip cursor={{fill: '#f8fafc'}} contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'}} /><Bar dataKey="cantidad" fill="#f97316" radius={[10, 10, 0, 0]} barSize={60} /></BarChart></ResponsiveContainer></div></Card>
+          <Card><h3 className="text-xl font-black uppercase text-slate-700 border-b pb-6 mb-8 flex items-center gap-3"><Users className="text-orange-600" /> Productividad Mensual</h3><div className="space-y-4 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">{users.filter(u => u.role === Role.OPERATOR || u.role === Role.LEADER).map(u => { const count = records.filter(r => r.userId === u.id && isSameMonth(parseISO(r.date), startOfMonth(new Date()))).length; return (<div key={u.id} className="flex justify-between items-center p-4 bg-slate-50 rounded-2xl border border-slate-100 hover:border-orange-300 transition-colors"><div><span className="font-black text-slate-800 uppercase text-xs tracking-tight block">{u.name}</span><span className={`text-[9px] font-bold uppercase ${u.role === Role.LEADER ? 'text-amber-600' : 'text-slate-400'}`}>{u.role === Role.LEADER ? 'Resp. Mantenimiento' : 'Operario Línea'}</span></div><div className="flex items-center gap-3"><span className="bg-white shadow-sm px-3 py-1 rounded-lg text-[10px] font-black uppercase text-orange-600 border border-orange-100">{count} Tareas</span><MessageSquare className="w-5 h-5 text-emerald-500 cursor-pointer hover:scale-110 transition-transform" onClick={() => window.open(`https://wa.me/${u.phone}`)} /></div></div>); })}</div></Card>
+        </div>
+      </div>)}
+      
+      {activePanel === 'HISTORY' && (<div className="space-y-8 animate-in fade-in zoom-in duration-300">
+        <Card className="bg-slate-900 text-white border-none shadow-2xl shadow-slate-400/20 no-print">
+          <div className="flex flex-col md:flex-row gap-6 items-end">
+            <div className="w-full md:w-1/4 space-y-2"><label className="text-[10px] font-black uppercase text-slate-400 flex gap-2"><CalendarIcon className="w-3 h-3"/> Desde</label><input type="date" className="w-full bg-slate-800 border border-slate-700 rounded-xl p-3 text-sm font-bold outline-none focus:border-orange-500 text-white" value={historyFilter.dateFrom} onChange={e => setHistoryFilter({...historyFilter, dateFrom: e.target.value})} /></div>
+            <div className="w-full md:w-1/4 space-y-2"><label className="text-[10px] font-black uppercase text-slate-400 flex gap-2"><CalendarIcon className="w-3 h-3"/> Hasta</label><input type="date" className="w-full bg-slate-800 border border-slate-700 rounded-xl p-3 text-sm font-bold outline-none focus:border-orange-500 text-white" value={historyFilter.dateTo} onChange={e => setHistoryFilter({...historyFilter, dateTo: e.target.value})} /></div>
+            <div className="w-full md:w-1/4 space-y-2"><label className="text-[10px] font-black uppercase text-slate-400 flex gap-2"><UserCog className="w-3 h-3"/> Empleado</label><select className="w-full bg-slate-800 border border-slate-700 rounded-xl p-3 text-sm font-bold outline-none focus:border-orange-500 text-white cursor-pointer appearance-none" value={historyFilter.userId} onChange={e => setHistoryFilter({...historyFilter, userId: e.target.value})}><option value="ALL">Todos los Usuarios</option>{users.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}</select></div>
+            <div className="w-full md:w-1/4 space-y-2"><label className="text-[10px] font-black uppercase text-slate-400 flex gap-2"><Filter className="w-3 h-3"/> Tipo Registro</label><select className="w-full bg-slate-800 border border-slate-700 rounded-xl p-3 text-sm font-bold outline-none focus:border-orange-500 text-white cursor-pointer appearance-none" value={historyFilter.type} onChange={e => setHistoryFilter({...historyFilter, type: e.target.value})}><option value="ALL">Todo</option><option value="MANTO">Mantenimientos</option><option value="ISSUE">Fallas</option></select></div>
+          </div>
+        </Card>
+        
+        {/* BOTONES DE EXPORTACIÓN */}
+        <div className="flex gap-4 justify-end no-print">
+          <IndustrialButton onClick={exportToCSV} variant="success"><FileSpreadsheet className="w-4 h-4"/> Exportar Excel (CSV)</IndustrialButton>
+          <IndustrialButton onClick={handlePrint} variant="dark"><FileText className="w-4 h-4"/> Imprimir Reporte PDF</IndustrialButton>
+        </div>
+
+        {/* TABLA IMPRIMIBLE */}
+        <Card className="p-0 overflow-hidden border-orange-100 print:shadow-none print:border-none">
+          <div className="p-6 hidden print:block">
+            <h1 className="text-3xl font-black uppercase">Reporte de Auditoría TPM</h1>
+            <p className="text-sm text-slate-500">Generado el: {format(new Date(), 'dd/MM/yyyy HH:mm')}</p>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead className="bg-orange-50 text-orange-900 text-[10px] font-black uppercase tracking-widest print:bg-slate-200 print:text-slate-900">
+                <tr><th className="p-6">Fecha</th><th className="p-6">Máquina</th><th className="p-6">Responsable</th><th className="p-6">Detalle</th><th className="p-6 text-center">Tipo</th></tr>
+              </thead>
+              <tbody className="text-xs font-medium text-slate-600">
+                {filteredRecords.length > 0 ? filteredRecords.map(r => { 
+                  const user = users.find(u => u.id === r.userId); 
+                  const machine = machines.find(m => m.id === r.machineId); 
+                  return (
+                    <tr key={r.id} className="border-b border-slate-100 hover:bg-slate-50 transition-colors group print:border-slate-300">
+                      <td className="p-6 font-bold whitespace-nowrap text-slate-400 group-hover:text-orange-600 transition-colors print:text-slate-900">{format(parseISO(r.date), 'dd/MM/yyyy HH:mm')}</td>
+                      <td className="p-6 uppercase font-black text-slate-800">{machine?.name || 'Máquina Eliminada'}</td>
+                      <td className="p-6"><div className="flex items-center gap-2"><span className="w-6 h-6 rounded-full bg-slate-200 flex items-center justify-center text-[10px] font-black text-slate-500 print:hidden">{user?.name.charAt(0)}</span><span className="font-bold">{user?.name}</span></div></td>
+                      <td className="p-6 italic max-w-xs truncate print:whitespace-normal print:overflow-visible" title={r.observations}>{r.observations || <span className="text-slate-300">-</span>}</td>
+                      <td className="p-6 text-center">{r.isIssue ? <span className="inline-flex items-center gap-1 bg-red-100 text-red-700 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-wider print:border print:border-red-500">Falla</span> : <span className="inline-flex items-center gap-1 bg-emerald-100 text-emerald-700 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-wider print:border print:border-emerald-500">OK</span>}</td>
+                    </tr>
+                  ); 
+                }) : <tr><td colSpan={5} className="p-12 text-center text-slate-400 font-bold uppercase text-sm">Sin registros</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      </div>)}
       
       {activePanel === 'MACHINES' && (<div className="grid grid-cols-1 lg:grid-cols-3 gap-12 animate-in fade-in duration-300"><Card className="lg:col-span-1 border-orange-200 bg-orange-50/10"><form onSubmit={handleMachineSubmit} className="space-y-6"><h3 className="text-2xl font-black text-slate-800 uppercase tracking-tighter flex items-center gap-3"><Plus className="text-orange-600" /> {editingMachineId ? 'Actualizar Activo' : 'Registro de Activo'}</h3><div className="space-y-2"><label className="text-[10px] font-black uppercase text-slate-400 ml-2">Nombre Técnico</label><input required className="w-full p-5 rounded-2xl border-2 border-slate-100 font-bold outline-none focus:border-orange-500 transition-all shadow-inner" placeholder="Prensa Hidráulica X-10" value={machineForm.name} onChange={e => setMachineForm({...machineForm, name: e.target.value})} /></div><div className="space-y-2"><label className="text-[10px] font-black uppercase text-slate-400 ml-2">Ciclo de Servicio (Días)</label><input type="number" required className="w-full p-5 rounded-2xl border-2 border-slate-100 font-bold outline-none focus:border-orange-500 transition-all shadow-inner" placeholder="15" value={machineForm.interval} onChange={e => setMachineForm({...machineForm, interval: parseInt(e.target.value)})} /></div><div className="flex gap-2"><IndustrialButton fullWidth type="submit">{editingMachineId ? 'Guardar Cambios' : 'Dar de Alta'}</IndustrialButton>{editingMachineId && <button type="button" onClick={() => { setEditingMachineId(null); setMachineForm({name:'', interval: 15}); }} className="px-4 font-bold text-slate-400 hover:text-red-500">Cancelar</button>}</div></form></Card><div className="lg:col-span-2"><Card className="p-0 overflow-hidden"><table className="w-full text-left border-collapse"><thead className="bg-slate-900 text-white text-[10px] font-black uppercase tracking-widest"><tr><th className="p-6">Nombre de Máquina</th><th className="p-6 text-center">Frecuencia</th><th className="p-6">Operario Asignado</th><th className="p-6 text-right">Acciones</th></tr></thead><tbody className="text-xs font-bold text-slate-600">{machines.map(m => (<tr key={m.id} className="border-b border-slate-100 hover:bg-slate-50 transition-colors"><td className="p-6 text-slate-900 uppercase font-black tracking-tight">{m.name}</td><td className="p-6 text-center">{m.intervalDays || m.interval || 0} días</td><td className="p-6"><select className="bg-white border-2 border-slate-100 p-3 rounded-xl text-[10px] font-black uppercase outline-none focus:border-orange-500 cursor-pointer" value={m.assignedTo || 'none'} onChange={e => updateMachineOwner(m.id, e.target.value)}><option value="none">-- Disponible --</option>{users.map(u => (<option key={u.id} value={u.id}>{u.name} ({(u.role ? u.role.substring(0,3) : 'N/A')})</option>))}</select></td><td className="p-6 text-right"><div className="flex items-center justify-end gap-3"><button onClick={() => handleEditMachine(m)} className="text-blue-400 hover:text-blue-600 transition-colors"><Pencil className="w-4 h-4" /></button><button onClick={() => handleDeleteMachine(m.id)} className="text-red-400 hover:text-red-600 transition-colors"><Trash2 className="w-4 h-4" /></button></div></td></tr>))}</tbody></table></Card></div></div>)}
       
