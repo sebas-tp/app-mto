@@ -13,7 +13,7 @@ import {
   isWithinInterval, startOfDay, endOfDay 
 } from 'date-fns';
 
-// --- FIREBASE IMPORTS (SOLO FIRESTORE) ---
+// --- FIREBASE IMPORTS ---
 import { db } from './firebaseConfig'; 
 import { 
   collection, doc, addDoc, updateDoc, onSnapshot, query, orderBy, setDoc
@@ -74,18 +74,15 @@ const PinModal: React.FC<{ isOpen: boolean; onClose: () => void; onConfirm: (pin
 // --- MAIN APP ---
 
 export default function App() {
-  // Datos
   const [users, setUsers] = useState<User[]>([]);
   const [machines, setMachines] = useState<Machine[]>([]);
   const [records, setRecords] = useState<MaintenanceRecord[]>([]);
   
-  // Login
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [view, setView] = useState<'LOGIN' | 'DASHBOARD'>('LOGIN');
   const [showAdminLogin, setShowAdminLogin] = useState(false);
   const [adminPass, setAdminPass] = useState('');
 
-  // Sincronización Realtime con Firestore
   useEffect(() => {
     const unsubUsers = onSnapshot(collection(db, "users"), (snapshot) => {
       setUsers(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as User)));
@@ -97,7 +94,6 @@ export default function App() {
       setRecords(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as MaintenanceRecord)));
     });
     
-    // Recuperar sesión local si existe (para no loguearse a cada rato)
     const savedUser = localStorage.getItem('local_session_user');
     if (savedUser) {
       setCurrentUser(JSON.parse(savedUser));
@@ -106,8 +102,6 @@ export default function App() {
 
     return () => { unsubUsers(); unsubMachines(); unsubRecords(); };
   }, []);
-
-  // --- ACTIONS ---
 
   const handleLogin = (userId: string) => {
     const user = users.find(u => u.id === userId);
@@ -141,18 +135,15 @@ export default function App() {
     setView('LOGIN');
   };
 
-  // --- SEED DATABASE (RELLENAR FIREBASE SI ESTA VACIO) ---
   const seedDB = async () => {
     const confirm = window.confirm("¿Seguro? Esto borrará/rescribirá los datos iniciales en la Nube.");
     if (!confirm) return;
 
     try {
-      // 1. Usuarios Iniciales
       await setDoc(doc(db, "users", "u1"), { name: 'Juan Operario', role: Role.OPERATOR, phone: '5491112345678', pin: '1234' });
       await setDoc(doc(db, "users", "u2"), { name: 'Pedro Líder', role: Role.LEADER, phone: '5491112345678', pin: '1234' });
       await setDoc(doc(db, "users", "u3"), { name: 'Ana Gerente', role: Role.MANAGER, phone: '5491112345678', pin: '9999' });
 
-      // 2. Máquinas Iniciales
       await setDoc(doc(db, "machines", "m1"), { name: 'Inyectora Plástico I-01', assignedTo: 'u1', lastMaintenance: new Date(Date.now() - 20 * 86400000).toISOString(), intervalDays: 15 });
       await setDoc(doc(db, "machines", "m2"), { name: 'Brazo Robótico R-4', assignedTo: undefined, lastMaintenance: new Date(Date.now() - 2 * 86400000).toISOString(), intervalDays: 15 });
       await setDoc(doc(db, "machines", "m3"), { name: 'Compresor Central C-80', assignedTo: 'u2', lastMaintenance: new Date(Date.now() - 40 * 86400000).toISOString(), intervalDays: 30 });
@@ -170,15 +161,11 @@ export default function App() {
     return "OPERARIO DE LÍNEA";
   };
 
-  // --- LOGIN VIEW (SELECTOR SIMPLIFICADO) ---
   if (view === 'LOGIN') {
-    // Filtramos para que Gerencia NO salga en el selector
     const publicUsers = users.filter(u => u.role !== Role.MANAGER);
 
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-white p-6 relative overflow-hidden">
-        
-        {/* MODAL ADMIN LOGIN */}
         {showAdminLogin && (
           <div className="fixed inset-0 bg-slate-900/90 z-50 flex items-center justify-center p-6 animate-in fade-in duration-300">
             <Card className="w-full max-w-md border-slate-700 bg-slate-800 text-white shadow-2xl">
@@ -187,13 +174,7 @@ export default function App() {
                 <button onClick={() => setShowAdminLogin(false)}><X className="text-slate-400 hover:text-white"/></button>
               </div>
               <p className="text-sm text-slate-400 mb-6 font-medium">Área exclusiva para Gerencia Técnica. Ingrese clave maestra.</p>
-              <input 
-                type="password" 
-                placeholder="Contraseña"
-                className="w-full p-4 rounded-xl bg-slate-900 border border-slate-600 text-white font-bold mb-6 outline-none focus:border-orange-500 text-center tracking-widest text-xl"
-                value={adminPass}
-                onChange={e => setAdminPass(e.target.value)}
-              />
+              <input type="password" placeholder="Contraseña" className="w-full p-4 rounded-xl bg-slate-900 border border-slate-600 text-white font-bold mb-6 outline-none focus:border-orange-500 text-center tracking-widest text-xl" value={adminPass} onChange={e => setAdminPass(e.target.value)} />
               <IndustrialButton fullWidth onClick={handleAdminLogin}>Ingresar al Panel</IndustrialButton>
             </Card>
           </div>
@@ -216,13 +197,7 @@ export default function App() {
                 {publicUsers.map(u => <option key={u.id} value={u.id}>{u.name} | {getRoleDisplayName(u.role)}</option>)}
               </select>
             </div>
-            
-            {/* BOTON PARA RELLENAR DB SI ESTA VACIA */}
-            {users.length === 0 && (
-              <IndustrialButton fullWidth variant="secondary" onClick={seedDB}>Inicializar Base de Datos Nube</IndustrialButton>
-            )}
-
-            {/* BOTON DE GERENCIA DISCRETO */}
+            {users.length === 0 && (<IndustrialButton fullWidth variant="secondary" onClick={seedDB}>Inicializar Base de Datos Nube</IndustrialButton>)}
             <div className="pt-4 border-t border-slate-100 flex justify-center">
               <button onClick={() => setShowAdminLogin(true)} className="flex items-center gap-2 text-[10px] font-black uppercase text-slate-300 hover:text-orange-600 transition-colors tracking-widest">
                 <Lock className="w-3 h-3" /> Acceso Gerencial
@@ -234,28 +209,18 @@ export default function App() {
     );
   }
 
-  // --- APP DASHBOARD ---
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col font-sans">
       <header className="bg-white/80 backdrop-blur-md border-b border-slate-100 px-8 py-5 flex items-center justify-between sticky top-0 z-50">
         <div className="flex items-center gap-4">
           <div className="bg-orange-600 p-2.5 rounded-2xl text-white shadow-lg shadow-orange-200"><Settings className="w-7 h-7" /></div>
-          <div>
-            <h1 className="text-2xl font-black uppercase tracking-tighter text-slate-900 leading-none">TPM <span className="text-orange-600">PRO</span></h1>
-            <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mt-1">Status: Conectado a Nube</p>
-          </div>
+          <div><h1 className="text-2xl font-black uppercase tracking-tighter text-slate-900 leading-none">TPM <span className="text-orange-600">PRO</span></h1><p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mt-1">Status: Conectado a Nube</p></div>
         </div>
         <div className="flex items-center gap-8">
-          <div className="text-right hidden sm:block">
-            <p className="text-sm font-black text-slate-900 uppercase leading-none">{currentUser?.name}</p>
-            <span className="text-[9px] font-black bg-amber-100 text-amber-700 px-3 py-1 rounded-full uppercase mt-2 inline-block tracking-tighter">
-              {getRoleDisplayName(currentUser?.role)}
-            </span>
-          </div>
+          <div className="text-right hidden sm:block"><p className="text-sm font-black text-slate-900 uppercase leading-none">{currentUser?.name}</p><span className="text-[9px] font-black bg-amber-100 text-amber-700 px-3 py-1 rounded-full uppercase mt-2 inline-block tracking-tighter">{getRoleDisplayName(currentUser?.role)}</span></div>
           <button onClick={handleLogout} className="p-4 text-slate-300 hover:text-red-600 hover:bg-red-50 rounded-2xl transition-all"><LogOut className="w-6 h-6" /></button>
         </div>
       </header>
-
       <main className="flex-1 p-6 md:p-12 max-w-7xl mx-auto w-full">
         {currentUser?.role === Role.OPERATOR && <OperatorView user={currentUser} machines={machines} records={records} />}
         {currentUser?.role === Role.LEADER && <LeaderView user={currentUser} machines={machines} records={records} />}
@@ -265,7 +230,6 @@ export default function App() {
   );
 }
 
-// --- OPERATOR VIEW ---
 const OperatorView: React.FC<{ user: User; machines: Machine[]; records: MaintenanceRecord[] }> = ({ user, machines, records }) => {
   const [selectedMachine, setSelectedMachine] = useState<Machine | null>(null);
   const [checklist, setChecklist] = useState<boolean[]>(new Array(5).fill(false));
@@ -276,30 +240,9 @@ const OperatorView: React.FC<{ user: User; machines: Machine[]; records: Mainten
   const myMachines = machines.filter(m => m.assignedTo === user.id);
   const availableMachines = machines.filter(m => !m.assignedTo);
 
-  const updateMachineAssign = async (machineId: string, userId: string) => {
-    await updateDoc(doc(db, "machines", machineId), { assignedTo: userId });
-  };
-
-  const requestSignature = () => {
-    if (!selectedMachine || checklist.some(c => !c)) return alert("Debe tildar todos los puntos de seguridad.");
-    setShowPinModal(true);
-  };
-
-  const finalizeManto = async (pin: string) => {
-    if (pin !== user.pin) return alert("ERROR DE FIRMA: PIN incorrecto.");
-    if (!selectedMachine) return;
-
-    try {
-      await addDoc(collection(db, "records"), {
-        machineId: selectedMachine.id, userId: user.id, date: new Date().toISOString(),
-        observations: obs, type: MaintenanceType.LIGHT, isIssue: isCritical
-      });
-      await updateDoc(doc(db, "machines", selectedMachine.id), { lastMaintenance: new Date().toISOString() });
-      
-      setSelectedMachine(null); setIsCritical(false); setObs(''); setChecklist(new Array(5).fill(false)); setShowPinModal(false);
-      alert("Certificado digitalmente.");
-    } catch (e) { console.error(e); alert("Error de conexión."); }
-  };
+  const updateMachineAssign = async (machineId: string, userId: string) => { await updateDoc(doc(db, "machines", machineId), { assignedTo: userId }); };
+  const requestSignature = () => { if (!selectedMachine || checklist.some(c => !c)) return alert("Debe tildar todos los puntos de seguridad."); setShowPinModal(true); };
+  const finalizeManto = async (pin: string) => { if (pin !== user.pin) return alert("ERROR DE FIRMA: PIN incorrecto."); if (!selectedMachine) return; try { await addDoc(collection(db, "records"), { machineId: selectedMachine.id, userId: user.id, date: new Date().toISOString(), observations: obs, type: MaintenanceType.LIGHT, isIssue: isCritical }); await updateDoc(doc(db, "machines", selectedMachine.id), { lastMaintenance: new Date().toISOString() }); setSelectedMachine(null); setIsCritical(false); setObs(''); setChecklist(new Array(5).fill(false)); setShowPinModal(false); alert("Certificado digitalmente."); } catch (e) { console.error(e); alert("Error de conexión."); } };
 
   if (selectedMachine) {
     return (
@@ -326,11 +269,9 @@ const OperatorView: React.FC<{ user: User; machines: Machine[]; records: Mainten
   );
 };
 
-// --- LEADER VIEW ---
 const LeaderView: React.FC<{ user: User; machines: Machine[]; records: MaintenanceRecord[] }> = ({ user, machines, records }) => {
   const [closingIssue, setClosingIssue] = useState<MaintenanceRecord | null>(null);
   const [closingComment, setClosingComment] = useState('');
-  
   const [selectedMachine, setSelectedMachine] = useState<Machine | null>(null);
   const [checklist, setChecklist] = useState<boolean[]>(new Array(5).fill(false));
   const [mantoObs, setMantoObs] = useState('');
@@ -339,22 +280,8 @@ const LeaderView: React.FC<{ user: User; machines: Machine[]; records: Maintenan
   const issues = records.filter(r => r.isIssue);
   const myMachines = machines.filter(m => m.assignedTo === user.id);
 
-  const handleCloseIssue = async () => {
-    if(!closingComment) return alert("Debe ingresar comentario.");
-    if(!closingIssue) return;
-    await updateDoc(doc(db, "records", closingIssue.id), { isIssue: false, observations: closingIssue.observations + ` | SOLUCIÓN LÍDER: ${closingComment}` });
-    setClosingIssue(null); setClosingComment(''); alert("Incidencia cerrada.");
-  };
-
-  const finalizeLeaderManto = async (pin: string) => {
-    if (pin !== user.pin) return alert("ERROR: PIN inválido.");
-    if (!selectedMachine) return;
-    try {
-      await addDoc(collection(db, "records"), { machineId: selectedMachine.id, userId: user.id, date: new Date().toISOString(), observations: `MANTENIMIENTO PROFUNDO: ${mantoObs}`, type: MaintenanceType.HEAVY, isIssue: false });
-      await updateDoc(doc(db, "machines", selectedMachine.id), { lastMaintenance: new Date().toISOString() });
-      setSelectedMachine(null); setChecklist(new Array(5).fill(false)); setMantoObs(''); setShowPinModal(false); alert("Certificado por Liderazgo.");
-    } catch(e) { console.error(e); }
-  };
+  const handleCloseIssue = async () => { if(!closingComment) return alert("Debe ingresar comentario."); if(!closingIssue) return; await updateDoc(doc(db, "records", closingIssue.id), { isIssue: false, observations: closingIssue.observations + ` | SOLUCIÓN LÍDER: ${closingComment}` }); setClosingIssue(null); setClosingComment(''); alert("Incidencia cerrada."); };
+  const finalizeLeaderManto = async (pin: string) => { if (pin !== user.pin) return alert("ERROR: PIN inválido."); if (!selectedMachine) return; try { await addDoc(collection(db, "records"), { machineId: selectedMachine.id, userId: user.id, date: new Date().toISOString(), observations: `MANTENIMIENTO PROFUNDO: ${mantoObs}`, type: MaintenanceType.HEAVY, isIssue: false }); await updateDoc(doc(db, "machines", selectedMachine.id), { lastMaintenance: new Date().toISOString() }); setSelectedMachine(null); setChecklist(new Array(5).fill(false)); setMantoObs(''); setShowPinModal(false); alert("Certificado por Liderazgo."); } catch(e) { console.error(e); } };
 
   if (selectedMachine) {
     return (
@@ -381,23 +308,20 @@ const LeaderView: React.FC<{ user: User; machines: Machine[]; records: Maintenan
   );
 };
 
-// --- MANAGER VIEW ---
 const ManagerView: React.FC<{ users: User[]; machines: Machine[]; records: MaintenanceRecord[] }> = ({ users, machines, records }) => {
   const [activePanel, setActivePanel] = useState<'STATS' | 'HISTORY' | 'MACHINES' | 'USERS'>('STATS');
   const [userForm, setUserForm] = useState({ name: '', phone: '', role: Role.OPERATOR, pin: '1234' });
   const [machineForm, setMachineForm] = useState({ name: '', interval: 15 });
   const [historyFilter, setHistoryFilter] = useState({ userId: 'ALL', dateFrom: '', dateTo: '', type: 'ALL' });
 
-  // KPIs
   const stats = useMemo(() => { const total = machines.length; const due = machines.filter(m => isPast(addDays(parseISO(m.lastMaintenance), m.intervalDays))).length; return [{ name: 'Operativo', value: total - due, color: '#10b981' }, { name: 'Vencido', value: due, color: '#ef4444' }]; }, [machines]);
   const maintenanceTypeStats = useMemo(() => { const preventive = records.filter(r => !r.isIssue).length; const corrective = records.filter(r => r.isIssue).length; return [{ name: 'Preventivo', cantidad: preventive }, { name: 'Correctivo', cantidad: corrective }]; }, [records]);
   const ranking = useMemo(() => { const activeStaff = users.filter(u => u.role === Role.OPERATOR || u.role === Role.LEADER); return activeStaff.map(u => ({ ...u, score: records.filter(r => r.userId === u.id).length })).sort((a, b) => b.score - a.score).slice(0, 3); }, [users, records]);
   const filteredRecords = useMemo(() => { return records.filter(r => { const matchUser = historyFilter.userId === 'ALL' || r.userId === historyFilter.userId; let matchDate = true; if (historyFilter.dateFrom && historyFilter.dateTo) { matchDate = isWithinInterval(parseISO(r.date), { start: startOfDay(parseISO(historyFilter.dateFrom)), end: endOfDay(parseISO(historyFilter.dateTo)) }); } const matchType = historyFilter.type === 'ALL' ? true : historyFilter.type === 'ISSUE' ? r.isIssue : !r.isIssue; return matchUser && matchDate && matchType; }).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()); }, [records, historyFilter]);
 
-  // DB Writes
   const addUser = async (e: React.FormEvent) => { e.preventDefault(); await addDoc(collection(db, "users"), { ...userForm }); setUserForm({ name: '', phone: '', role: Role.OPERATOR, pin: '1234' }); alert("Usuario creado en nube."); };
-  const addMachine = async (e: React.FormEvent) => { e.preventDefault(); await addDoc(collection(db, "machines"), { name: machineForm.name, intervalDays: machineForm.interval, lastMaintenance: new Date().toISOString(), assignedTo: undefined }); setMachineForm({ name: '', interval: 15 }); alert("Máquina creada en nube."); };
-  const updateMachineOwner = async (machineId: string, val: string) => { await updateDoc(doc(db, "machines", machineId), { assignedTo: val === "none" ? undefined : val }); };
+  const addMachine = async (e: React.FormEvent) => { e.preventDefault(); await addDoc(collection(db, "machines"), { name: machineForm.name, intervalDays: machineForm.interval, lastMaintenance: new Date().toISOString(), assignedTo: null }); setMachineForm({ name: '', interval: 15 }); alert("Máquina creada en nube."); }; // <--- CORREGIDO (assignedTo: null)
+  const updateMachineOwner = async (machineId: string, val: string) => { await updateDoc(doc(db, "machines", machineId), { assignedTo: val === "none" ? null : val }); }; // <--- CORREGIDO
   const updateUserRole = async (userId: string, newRole: Role) => { await updateDoc(doc(db, "users", userId), { role: newRole }); };
 
   return (
@@ -405,7 +329,7 @@ const ManagerView: React.FC<{ users: User[]; machines: Machine[]; records: Maint
       <div className="flex flex-col xl:flex-row justify-between items-center gap-8"><div><h2 className="text-5xl font-black text-slate-900 uppercase tracking-tighter">Control <span className="text-orange-600">Maestro</span></h2><p className="text-slate-400 font-bold uppercase text-[10px] tracking-[0.3em] mt-3">Gerencia Técnica • Dashboard Intelligence</p></div><div className="flex bg-white p-2 rounded-[2rem] border border-slate-100 shadow-xl shadow-slate-200/50 overflow-x-auto max-w-full">{[{ id: 'STATS', label: 'KPIs Globales', icon: BarChart3 }, { id: 'HISTORY', label: 'Auditoría', icon: History }, { id: 'MACHINES', label: 'Activos', icon: HardDrive }, { id: 'USERS', label: 'Personal', icon: Users }].map(tab => (<button key={tab.id} onClick={() => setActivePanel(tab.id as any)} className={`px-6 py-3 rounded-2xl font-black text-[10px] uppercase transition-all tracking-widest flex items-center gap-2 whitespace-nowrap ${activePanel === tab.id ? 'bg-orange-600 text-white shadow-lg shadow-orange-200' : 'text-slate-400 hover:text-orange-500'}`}><tab.icon className="w-4 h-4" /> {tab.label}</button>))}</div></div>
       {activePanel === 'STATS' && (<div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500"><div className="grid grid-cols-1 lg:grid-cols-3 gap-8"><Card className="lg:col-span-2 bg-gradient-to-br from-slate-900 to-slate-800 text-white border-none shadow-slate-400/50 relative overflow-hidden"><div className="absolute top-0 right-0 p-8 opacity-10"><Trophy className="w-48 h-48" /></div><h3 className="text-xl font-black uppercase mb-8 flex items-center gap-3 relative z-10"><Trophy className="text-yellow-400" /> Top Performance</h3><div className="grid grid-cols-1 sm:grid-cols-3 gap-4 items-end relative z-10">{ranking.map((u, index) => { const styles = ["bg-yellow-400 text-yellow-900 border-yellow-300 h-48", "bg-slate-300 text-slate-900 border-slate-200 h-40", "bg-orange-400 text-orange-900 border-orange-300 h-32"]; return (<div key={u.id} className={`${styles[index]} p-5 rounded-3xl flex flex-col justify-between border-t-4 shadow-xl transform hover:-translate-y-2 transition-transform`}><div className="text-right font-black text-4xl opacity-50">#{index + 1}</div><div><p className="text-4xl font-black mb-1">{u.score}</p><p className="font-bold uppercase text-xs leading-tight truncate">{u.name}</p><p className="text-[9px] font-black uppercase tracking-widest opacity-60 mt-1">{u.role === Role.LEADER ? 'Líder' : 'Operario'}</p></div></div>); })}</div></Card><Card className="flex flex-col items-center justify-center"><h3 className="text-lg font-black uppercase text-slate-700 w-full text-center mb-4">Salud del Parque</h3><div className="h-[200px] w-full"><ResponsiveContainer><PieChart><Pie data={stats} cx="50%" cy="50%" innerRadius={60} outerRadius={80} paddingAngle={5} dataKey="value">{stats.map((e, i) => <Cell key={i} fill={e.color} strokeWidth={0} />)}</Pie><Tooltip contentStyle={{borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)'}} /><Legend verticalAlign="bottom" /></PieChart></ResponsiveContainer></div></Card></div><div className="grid grid-cols-1 lg:grid-cols-2 gap-8"><Card><h3 className="text-xl font-black uppercase text-slate-700 border-b pb-6 mb-8 flex items-center gap-3"><BarChart3 className="text-orange-600" /> Plan vs. Incidencias</h3><div className="h-[300px] w-full"><ResponsiveContainer width="100%" height="100%"><BarChart data={maintenanceTypeStats}><CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" /><XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fontSize: 10, fontWeight: 'bold', fill: '#94a3b8'}} /><YAxis axisLine={false} tickLine={false} tick={{fontSize: 10, fontWeight: 'bold', fill: '#94a3b8'}} /><Tooltip cursor={{fill: '#f8fafc'}} contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'}} /><Bar dataKey="cantidad" fill="#f97316" radius={[10, 10, 0, 0]} barSize={60} /></BarChart></ResponsiveContainer></div></Card><Card><h3 className="text-xl font-black uppercase text-slate-700 border-b pb-6 mb-8 flex items-center gap-3"><Users className="text-orange-600" /> Productividad Mensual</h3><div className="space-y-4 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">{users.filter(u => u.role === Role.OPERATOR || u.role === Role.LEADER).map(u => { const count = records.filter(r => r.userId === u.id && isSameMonth(parseISO(r.date), startOfMonth(new Date()))).length; return (<div key={u.id} className="flex justify-between items-center p-4 bg-slate-50 rounded-2xl border border-slate-100 hover:border-orange-300 transition-colors"><div><span className="font-black text-slate-800 uppercase text-xs tracking-tight block">{u.name}</span><span className={`text-[9px] font-bold uppercase ${u.role === Role.LEADER ? 'text-amber-600' : 'text-slate-400'}`}>{u.role === Role.LEADER ? 'Resp. Mantenimiento' : 'Operario Línea'}</span></div><div className="flex items-center gap-3"><span className="bg-white shadow-sm px-3 py-1 rounded-lg text-[10px] font-black uppercase text-orange-600 border border-orange-100">{count} Tareas</span><MessageSquare className="w-5 h-5 text-emerald-500 cursor-pointer hover:scale-110 transition-transform" onClick={() => window.open(`https://wa.me/${u.phone}`)} /></div></div>); })}</div></Card></div></div>)}
       {activePanel === 'HISTORY' && (<div className="space-y-8 animate-in fade-in zoom-in duration-300"><Card className="bg-slate-900 text-white border-none shadow-2xl shadow-slate-400/20"><div className="flex flex-col md:flex-row gap-6 items-end"><div className="w-full md:w-1/4 space-y-2"><label className="text-[10px] font-black uppercase text-slate-400 flex gap-2"><Calendar className="w-3 h-3"/> Desde</label><input type="date" className="w-full bg-slate-800 border border-slate-700 rounded-xl p-3 text-sm font-bold outline-none focus:border-orange-500 text-white" value={historyFilter.dateFrom} onChange={e => setHistoryFilter({...historyFilter, dateFrom: e.target.value})} /></div><div className="w-full md:w-1/4 space-y-2"><label className="text-[10px] font-black uppercase text-slate-400 flex gap-2"><Calendar className="w-3 h-3"/> Hasta</label><input type="date" className="w-full bg-slate-800 border border-slate-700 rounded-xl p-3 text-sm font-bold outline-none focus:border-orange-500 text-white" value={historyFilter.dateTo} onChange={e => setHistoryFilter({...historyFilter, dateTo: e.target.value})} /></div><div className="w-full md:w-1/4 space-y-2"><label className="text-[10px] font-black uppercase text-slate-400 flex gap-2"><UserCog className="w-3 h-3"/> Empleado</label><select className="w-full bg-slate-800 border border-slate-700 rounded-xl p-3 text-sm font-bold outline-none focus:border-orange-500 text-white cursor-pointer appearance-none" value={historyFilter.userId} onChange={e => setHistoryFilter({...historyFilter, userId: e.target.value})}><option value="ALL">Todos los Usuarios</option>{users.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}</select></div><div className="w-full md:w-1/4 space-y-2"><label className="text-[10px] font-black uppercase text-slate-400 flex gap-2"><Filter className="w-3 h-3"/> Tipo Registro</label><select className="w-full bg-slate-800 border border-slate-700 rounded-xl p-3 text-sm font-bold outline-none focus:border-orange-500 text-white cursor-pointer appearance-none" value={historyFilter.type} onChange={e => setHistoryFilter({...historyFilter, type: e.target.value})}><option value="ALL">Todo</option><option value="MANTO">Mantenimientos</option><option value="ISSUE">Fallas</option></select></div></div></Card><Card className="p-0 overflow-hidden border-orange-100"><div className="overflow-x-auto"><table className="w-full text-left border-collapse"><thead className="bg-orange-50 text-orange-900 text-[10px] font-black uppercase tracking-widest"><tr><th className="p-6">Fecha</th><th className="p-6">Máquina</th><th className="p-6">Responsable</th><th className="p-6">Detalle</th><th className="p-6 text-center">Tipo</th></tr></thead><tbody className="text-xs font-medium text-slate-600">{filteredRecords.length > 0 ? filteredRecords.map(r => { const user = users.find(u => u.id === r.userId); const machine = machines.find(m => m.id === r.machineId); return (<tr key={r.id} className="border-b border-slate-100 hover:bg-slate-50 transition-colors group"><td className="p-6 font-bold whitespace-nowrap text-slate-400 group-hover:text-orange-600 transition-colors">{format(parseISO(r.date), 'dd/MM/yyyy HH:mm')}</td><td className="p-6 uppercase font-black text-slate-800">{machine?.name || 'Máquina Eliminada'}</td><td className="p-6"><div className="flex items-center gap-2"><span className="w-6 h-6 rounded-full bg-slate-200 flex items-center justify-center text-[10px] font-black text-slate-500">{user?.name.charAt(0)}</span><span className="font-bold">{user?.name}</span></div></td><td className="p-6 italic max-w-xs truncate" title={r.observations}>{r.observations || <span className="text-slate-300">-</span>}</td><td className="p-6 text-center">{r.isIssue ? <span className="inline-flex items-center gap-1 bg-red-100 text-red-700 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-wider">Falla</span> : <span className="inline-flex items-center gap-1 bg-emerald-100 text-emerald-700 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-wider">OK</span>}</td></tr>); }) : <tr><td colSpan={5} className="p-12 text-center text-slate-400 font-bold uppercase text-sm">Sin registros</td></tr>}</tbody></table></div></Card></div>)}
-      {activePanel === 'MACHINES' && (<div className="grid grid-cols-1 lg:grid-cols-3 gap-12 animate-in fade-in duration-300"><Card className="lg:col-span-1 border-orange-200 bg-orange-50/10"><form onSubmit={addMachine} className="space-y-6"><h3 className="text-2xl font-black text-slate-800 uppercase tracking-tighter flex items-center gap-3"><Plus className="text-orange-600" /> Registro de Activo</h3><div className="space-y-2"><label className="text-[10px] font-black uppercase text-slate-400 ml-2">Nombre Técnico</label><input required className="w-full p-5 rounded-2xl border-2 border-slate-100 font-bold outline-none focus:border-orange-500 transition-all shadow-inner" placeholder="Prensa Hidráulica X-10" value={machineForm.name} onChange={e => setMachineForm({...machineForm, name: e.target.value})} /></div><div className="space-y-2"><label className="text-[10px] font-black uppercase text-slate-400 ml-2">Ciclo de Servicio (Días)</label><input type="number" required className="w-full p-5 rounded-2xl border-2 border-slate-100 font-bold outline-none focus:border-orange-500 transition-all shadow-inner" placeholder="15" value={machineForm.interval} onChange={e => setMachineForm({...machineForm, interval: parseInt(e.target.value)})} /></div><IndustrialButton fullWidth type="submit">Dar de Alta Activo</IndustrialButton></form></Card><div className="lg:col-span-2"><Card className="p-0 overflow-hidden"><table className="w-full text-left border-collapse"><thead className="bg-slate-900 text-white text-[10px] font-black uppercase tracking-widest"><tr><th className="p-6">Nombre de Máquina</th><th className="p-6 text-center">Frecuencia</th><th className="p-6">Operario Asignado</th></tr></thead><tbody className="text-xs font-bold text-slate-600">{machines.map(m => (<tr key={m.id} className="border-b border-slate-100 hover:bg-slate-50 transition-colors"><td className="p-6 text-slate-900 uppercase font-black tracking-tight">{m.name}</td><td className="p-6 text-center">{m.intervalDays || m.interval || 0} días</td><td className="p-6"><select className="bg-white border-2 border-slate-100 p-3 rounded-xl text-[10px] font-black uppercase outline-none focus:border-orange-500 cursor-pointer" value={m.assignedTo || 'none'} onChange={e => updateMachineOwner(m.id, e.target.value)}><option value="none">-- Disponible --</option>{users.map(u => <option key={u.id} value={u.id}>{u.name} ({(u.role ? u.role.substring(0,3) : 'N/A')})</option>)}</select></td></tr>))}</tbody></table></Card></div></div>)}
+      {activePanel === 'MACHINES' && (<div className="grid grid-cols-1 lg:grid-cols-3 gap-12 animate-in fade-in duration-300"><Card className="lg:col-span-1 border-orange-200 bg-orange-50/10"><form onSubmit={addMachine} className="space-y-6"><h3 className="text-2xl font-black text-slate-800 uppercase tracking-tighter flex items-center gap-3"><Plus className="text-orange-600" /> Registro de Activo</h3><div className="space-y-2"><label className="text-[10px] font-black uppercase text-slate-400 ml-2">Nombre Técnico</label><input required className="w-full p-5 rounded-2xl border-2 border-slate-100 font-bold outline-none focus:border-orange-500 transition-all shadow-inner" placeholder="Prensa Hidráulica X-10" value={machineForm.name} onChange={e => setMachineForm({...machineForm, name: e.target.value})} /></div><div className="space-y-2"><label className="text-[10px] font-black uppercase text-slate-400 ml-2">Ciclo de Servicio (Días)</label><input type="number" required className="w-full p-5 rounded-2xl border-2 border-slate-100 font-bold outline-none focus:border-orange-500 transition-all shadow-inner" placeholder="15" value={machineForm.interval} onChange={e => setMachineForm({...machineForm, interval: parseInt(e.target.value)})} /></div><IndustrialButton fullWidth type="submit">Dar de Alta Activo</IndustrialButton></form></Card><div className="lg:col-span-2"><Card className="p-0 overflow-hidden"><table className="w-full text-left border-collapse"><thead className="bg-slate-900 text-white text-[10px] font-black uppercase tracking-widest"><tr><th className="p-6">Nombre de Máquina</th><th className="p-6 text-center">Frecuencia</th><th className="p-6">Operario Asignado</th></tr></thead><tbody className="text-xs font-bold text-slate-600">{machines.map(m => (<tr key={m.id} className="border-b border-slate-100 hover:bg-slate-50 transition-colors"><td className="p-6 text-slate-900 uppercase font-black tracking-tight">{m.name}</td><td className="p-6 text-center">{m.intervalDays || m.interval || 0} días</td><td className="p-6"><select className="bg-white border-2 border-slate-100 p-3 rounded-xl text-[10px] font-black uppercase outline-none focus:border-orange-500 cursor-pointer" value={m.assignedTo || 'none'} onChange={e => updateMachineOwner(m.id, e.target.value)}><option value="none">-- Disponible --</option>{users.map(u => (<option key={u.id} value={u.id}>{u.name} ({(u.role ? u.role.substring(0,3) : 'N/A')})</option>))}</select></td></tr>))}</tbody></table></Card></div></div>)}
       {activePanel === 'USERS' && (<div className="grid grid-cols-1 lg:grid-cols-3 gap-12 animate-in fade-in duration-300"><Card className="lg:col-span-1 border-orange-200 bg-orange-50/10"><form onSubmit={addUser} className="space-y-6"><h3 className="text-2xl font-black text-slate-800 uppercase tracking-tighter flex items-center gap-3"><UserPlus className="text-orange-600" /> Nuevo Colaborador</h3><input required className="w-full p-5 rounded-2xl border-2 border-slate-100 font-bold outline-none focus:border-orange-500 transition-all shadow-inner" placeholder="Nombre y Apellido" value={userForm.name} onChange={e => setUserForm({...userForm, name: e.target.value})} /><input className="w-full p-5 rounded-2xl border-2 border-slate-100 font-bold outline-none focus:border-orange-500 transition-all shadow-inner" placeholder="Teléfono" value={userForm.phone} onChange={e => setUserForm({...userForm, phone: e.target.value})} /><div className="space-y-2"><label className="text-[10px] font-black uppercase text-slate-400 ml-2">Asignar PIN de Seguridad</label><input type="password" maxLength={4} className="w-full p-5 rounded-2xl border-2 border-slate-100 font-bold outline-none focus:border-orange-500 transition-all shadow-inner tracking-widest" placeholder="PIN" value={userForm.pin} onChange={e => setUserForm({...userForm, pin: e.target.value.replace(/[^0-9]/g, '')})} /></div><select className="w-full p-5 rounded-2xl border-2 border-slate-100 font-bold outline-none focus:border-orange-500 cursor-pointer shadow-inner" value={userForm.role} onChange={e => setUserForm({...userForm, role: e.target.value as Role})}><option value={Role.OPERATOR}>OPERARIO DE LÍNEA</option><option value={Role.LEADER}>RESP. MANTENIMIENTO GRAL.</option><option value={Role.MANAGER}>GERENCIA Y AUDITORÍA</option></select><IndustrialButton fullWidth type="submit">Alta de Usuario</IndustrialButton></form></Card><div className="lg:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-6">{users.map(u => (<Card key={u.id} className="flex justify-between items-center group border-slate-200 hover:border-orange-400 transition-all"><div className="flex items-center gap-5"><div className="bg-slate-50 p-4 rounded-2xl group-hover:bg-orange-50 group-hover:text-orange-600 transition-colors"><UserCog className="w-6 h-6" /></div><div><h4 className="font-black text-slate-900 uppercase text-sm tracking-tight">{u.name}</h4><span className="text-[9px] font-black text-orange-600 uppercase tracking-widest leading-none">{u.role === Role.LEADER ? 'RESP. MANTO.' : u.role}</span></div></div><div className="flex flex-col gap-2 text-right"><span className="text-[9px] font-bold text-slate-400 uppercase">PIN: ****</span><select className="bg-white border border-slate-100 p-2 rounded-xl text-[9px] font-black uppercase outline-none focus:border-orange-500" value={u.role} onChange={e => updateUserRole(u.id, e.target.value as Role)}><option value={Role.OPERATOR}>OPERARIO</option><option value={Role.LEADER}>RESP. MANTO.</option><option value={Role.MANAGER}>GERENCIA</option></select></div></Card>))}</div></div>)}
     </div>
   );
