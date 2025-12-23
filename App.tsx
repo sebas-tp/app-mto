@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Users, 
@@ -16,7 +15,8 @@ import {
   History,
   HardDrive,
   UserCog,
-  LayoutDashboard
+  LayoutDashboard,
+  X // Agregamos icono de cerrar para los modales
 } from 'lucide-react';
 import { 
   PieChart, 
@@ -148,6 +148,13 @@ export default function App() {
     setView('LOGIN');
   };
 
+  // Helper para mostrar nombres bonitos de roles
+  const getRoleDisplayName = (role?: Role) => {
+    if (role === Role.LEADER) return "RESP. MANTENIMIENTO GRAL.";
+    if (role === Role.MANAGER) return "GERENCIA DE PLANTA";
+    return "OPERARIO DE LÍNEA";
+  };
+
   if (view === 'LOGIN') {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-white p-6">
@@ -164,7 +171,7 @@ export default function App() {
               <label className="text-[10px] font-black uppercase text-slate-400 ml-2">Personal Identificado</label>
               <select className="w-full bg-slate-50 border-2 border-slate-100 p-5 rounded-2xl text-lg font-bold outline-none appearance-none cursor-pointer focus:border-orange-500 transition-all" onChange={(e) => handleLogin(e.target.value)} value="">
                 <option value="" disabled>-- Seleccione su Identidad --</option>
-                {users.map(u => <option key={u.id} value={u.id}>{u.name} | {u.role}</option>)}
+                {users.map(u => <option key={u.id} value={u.id}>{u.name} | {getRoleDisplayName(u.role)}</option>)}
               </select>
             </div>
             {users.length === 0 && <IndustrialButton fullWidth variant="secondary" onClick={seedDB}>Inicializar Planta</IndustrialButton>}
@@ -187,7 +194,9 @@ export default function App() {
         <div className="flex items-center gap-8">
           <div className="text-right hidden sm:block">
             <p className="text-sm font-black text-slate-900 uppercase leading-none">{currentUser?.name}</p>
-            <span className="text-[9px] font-black bg-amber-100 text-amber-700 px-3 py-1 rounded-full uppercase mt-2 inline-block tracking-tighter">{currentUser?.role}</span>
+            <span className="text-[9px] font-black bg-amber-100 text-amber-700 px-3 py-1 rounded-full uppercase mt-2 inline-block tracking-tighter">
+              {getRoleDisplayName(currentUser?.role)}
+            </span>
           </div>
           <button onClick={handleLogout} className="p-4 text-slate-300 hover:text-red-600 hover:bg-red-50 rounded-2xl transition-all"><LogOut className="w-6 h-6" /></button>
         </div>
@@ -319,16 +328,117 @@ const OperatorView: React.FC<{ user: User; machines: Machine[]; setMachines: any
   );
 };
 
-// --- LEADER VIEW ---
+// --- LEADER VIEW (MODIFICADA) ---
 const LeaderView: React.FC<{ user: User; machines: Machine[]; setMachines: any; setRecords: any; records: MaintenanceRecord[] }> = ({ user, machines, setMachines, setRecords, records }) => {
+  const [closingIssue, setClosingIssue] = useState<MaintenanceRecord | null>(null);
+  const [closingComment, setClosingComment] = useState('');
+  
+  // Estado para mantenimiento del Líder
+  const [selectedMachine, setSelectedMachine] = useState<Machine | null>(null);
+  const [checklist, setChecklist] = useState<boolean[]>(new Array(5).fill(false));
+  const [mantoObs, setMantoObs] = useState('');
+
   const issues = records.filter(r => r.isIssue);
   const myMachines = machines.filter(m => m.assignedTo === user.id);
 
+  // --- LOGICA CIERRE DE ALERTA ---
+  const handleCloseIssue = () => {
+    if(!closingComment) return alert("Debe ingresar un comentario técnico sobre la solución.");
+    const updatedRecords = records.map(r => 
+      r.id === closingIssue?.id 
+      ? { ...r, isIssue: false, observations: r.observations + ` | SOLUCIÓN LÍDER: ${closingComment}` } 
+      : r
+    );
+    setRecords(updatedRecords);
+    setClosingIssue(null);
+    setClosingComment('');
+    alert("Incidencia cerrada y archivada.");
+  };
+
+  // --- LOGICA MANTENIMIENTO LIDER ---
+  const submitLeaderManto = () => {
+    if (!selectedMachine || checklist.some(c => !c)) return alert("Debe completar todo el checklist de seguridad avanzada.");
+    
+    // Guardamos el registro
+    const newRecord: MaintenanceRecord = {
+      id: Math.random().toString(36).substr(2, 9),
+      machineId: selectedMachine.id,
+      userId: user.id,
+      date: new Date().toISOString(),
+      observations: `MANTENIMIENTO PROFUNDO: ${mantoObs}`,
+      type: MaintenanceType.HEAVY, // Asumimos que el líder hace mantos pesados
+      isIssue: false
+    };
+
+    // Actualizamos la fecha de la máquina
+    const updatedMachines = machines.map(m => m.id === selectedMachine.id ? { ...m, lastMaintenance: new Date().toISOString() } : m);
+    
+    setMachines(updatedMachines);
+    setRecords([...records, newRecord]);
+    
+    // Reset
+    setSelectedMachine(null);
+    setChecklist(new Array(5).fill(false));
+    setMantoObs('');
+    alert("Mantenimiento Especializado Registrado.");
+  };
+
+  // --- VISTA FORMULARIO DE MANTENIMIENTO (LIDER) ---
+  if (selectedMachine) {
+    return (
+      <Card className="max-w-2xl mx-auto border-amber-600 shadow-amber-100/50">
+        <button onClick={() => setSelectedMachine(null)} className="text-[10px] font-black uppercase text-amber-700 mb-8 flex items-center gap-2 tracking-widest">← Cancelar Operación</button>
+        <div className="mb-8">
+          <h2 className="text-4xl font-black text-slate-800 uppercase tracking-tighter">{selectedMachine.name}</h2>
+          <p className="text-amber-600 font-bold uppercase text-[10px] tracking-widest mt-2">Protocolo Técnico Avanzado (Nivel Líder)</p>
+        </div>
+        
+        <div className="space-y-4 mb-8">
+          {["Desarme de Seguridad", "Lubricación de Ejes Principales", "Calibración de Sensores", "Prueba de Carga Máxima", "Limpieza Profunda de Motor"].map((t, i) => (
+            <label key={i} className={`flex items-center gap-5 p-6 rounded-3xl border-2 cursor-pointer transition-all ${checklist[i] ? 'bg-amber-50 border-amber-600 shadow-inner' : 'bg-white border-slate-100 hover:border-slate-300'}`}>
+              <input type="checkbox" className="w-8 h-8 accent-amber-700 rounded-lg" checked={checklist[i]} onChange={() => { const c = [...checklist]; c[i] = !c[i]; setChecklist(c); }} />
+              <span className="text-lg font-bold text-slate-700">{t}</span>
+            </label>
+          ))}
+        </div>
+
+        <textarea className="w-full p-6 border-2 border-slate-100 rounded-[2rem] mb-8 h-32 outline-none focus:border-amber-600 font-medium text-lg" placeholder="Detalles técnicos del ajuste..." value={mantoObs} onChange={e => setMantoObs(e.target.value)} />
+        <IndustrialButton variant="secondary" fullWidth onClick={submitLeaderManto}>Firmar Mantenimiento Experto</IndustrialButton>
+      </Card>
+    );
+  }
+
   return (
-    <div className="space-y-16">
+    <div className="space-y-16 relative">
+      {/* MODAL DE CIERRE DE INCIDENCIA */}
+      {closingIssue && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+          <Card className="w-full max-w-lg animate-in fade-in zoom-in duration-200">
+            <div className="flex justify-between items-center mb-6">
+              <h3 className="text-2xl font-black uppercase text-slate-800">Cierre Técnico</h3>
+              <button onClick={() => setClosingIssue(null)}><X className="w-6 h-6 text-slate-400 hover:text-red-500" /></button>
+            </div>
+            <p className="text-sm font-bold text-slate-500 uppercase mb-4">Resolución de falla en: <span className="text-slate-900">{machines.find(m => m.id === closingIssue.machineId)?.name}</span></p>
+            <div className="bg-red-50 p-4 rounded-xl border border-red-100 mb-6">
+              <p className="text-[10px] text-red-400 font-black uppercase mb-1">Reporte Original:</p>
+              <p className="text-red-800 italic font-medium">"{closingIssue.observations}"</p>
+            </div>
+            <textarea 
+              autoFocus
+              className="w-full p-4 bg-slate-50 border-2 border-slate-200 rounded-2xl mb-6 outline-none focus:border-orange-500 font-medium"
+              placeholder="Describa la solución aplicada..."
+              rows={4}
+              value={closingComment}
+              onChange={e => setClosingComment(e.target.value)}
+            />
+            <IndustrialButton fullWidth onClick={handleCloseIssue}>Confirmar Solución</IndustrialButton>
+          </Card>
+        </div>
+      )}
+
       <div className="flex justify-between items-end">
         <div>
-          <h2 className="text-5xl font-black text-slate-900 uppercase tracking-tighter leading-none">Liderazgo <span className="text-orange-600">MTO</span></h2>
+          <h2 className="text-4xl md:text-5xl font-black text-slate-900 uppercase tracking-tighter leading-none">Resp. Mantenimiento <span className="text-orange-600">Gral.</span></h2>
           <p className="text-slate-400 font-bold uppercase text-[10px] tracking-widest mt-3">Supervisión de Línea y Equipos Críticos</p>
         </div>
         <Wrench className="w-12 h-12 text-amber-600 opacity-20" />
@@ -353,7 +463,7 @@ const LeaderView: React.FC<{ user: User; machines: Machine[]; setMachines: any; 
                 <p className="text-slate-600 font-medium italic mb-6 leading-relaxed">"{r.observations}"</p>
                 <div className="flex justify-between items-center border-t border-red-100 pt-6">
                   <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Reporte por Operario</p>
-                  <button className="text-[10px] font-black text-orange-600 hover:text-orange-700 uppercase tracking-tighter" onClick={() => setRecords(records.filter(rec => rec.id !== r.id))}>Cerrar Incidencia</button>
+                  <button className="text-[10px] font-black text-orange-600 hover:text-orange-700 uppercase tracking-tighter bg-white px-4 py-2 rounded-xl shadow-sm hover:shadow-md transition-all" onClick={() => setClosingIssue(r)}>Resolver Incidencia</button>
                 </div>
               </Card>
             ))
@@ -377,10 +487,10 @@ const LeaderView: React.FC<{ user: User; machines: Machine[]; setMachines: any; 
                     {isDue && <span className="bg-red-600 text-white text-[9px] px-3 py-1 rounded-full animate-bounce uppercase font-black">Pendiente</span>}
                   </div>
                   <div className="bg-slate-50 p-4 rounded-2xl mb-6">
-                     <p className="text-[10px] font-black text-slate-400 uppercase mb-1">Último Manto.</p>
-                     <p className="font-bold text-slate-700">{format(parseISO(m.lastMaintenance), 'dd MMMM, yyyy')}</p>
+                      <p className="text-[10px] font-black text-slate-400 uppercase mb-1">Último Manto.</p>
+                      <p className="font-bold text-slate-700">{format(parseISO(m.lastMaintenance), 'dd MMMM, yyyy')}</p>
                   </div>
-                  <IndustrialButton variant="secondary" fullWidth onClick={() => setMachines(machines.map(mac => mac.id === m.id ? {...mac, lastMaintenance: new Date().toISOString()} : mac))}>Ejecutar Manto. Pesado</IndustrialButton>
+                  <IndustrialButton variant="secondary" fullWidth onClick={() => { setSelectedMachine(m); setChecklist(new Array(5).fill(false)); }}>Iniciar Protocolo Experto</IndustrialButton>
                 </Card>
               );
             })
@@ -517,7 +627,7 @@ const ManagerView: React.FC<{ users: User[]; setUsers: any; machines: Machine[];
               <input className="w-full p-5 rounded-2xl border-2 border-slate-100 font-bold outline-none focus:border-orange-500 transition-all shadow-inner" placeholder="Teléfono (Ej: 549...)" value={userForm.phone} onChange={e => setUserForm({...userForm, phone: e.target.value})} />
               <select className="w-full p-5 rounded-2xl border-2 border-slate-100 font-bold outline-none focus:border-orange-500 cursor-pointer shadow-inner" value={userForm.role} onChange={e => setUserForm({...userForm, role: e.target.value as Role})}>
                 <option value={Role.OPERATOR}>OPERARIO DE LÍNEA</option>
-                <option value={Role.LEADER}>LÍDER MANTENIMIENTO</option>
+                <option value={Role.LEADER}>RESP. MANTENIMIENTO GRAL.</option>
                 <option value={Role.MANAGER}>GERENCIA Y AUDITORÍA</option>
               </select>
               <IndustrialButton fullWidth type="submit">Alta de Usuario</IndustrialButton>
@@ -530,13 +640,13 @@ const ManagerView: React.FC<{ users: User[]; setUsers: any; machines: Machine[];
                   <div className="bg-slate-50 p-4 rounded-2xl group-hover:bg-orange-50 group-hover:text-orange-600 transition-colors"><UserCog className="w-6 h-6" /></div>
                   <div>
                     <h4 className="font-black text-slate-900 uppercase text-sm tracking-tight">{u.name}</h4>
-                    <span className="text-[9px] font-black text-orange-600 uppercase tracking-widest leading-none">{u.role}</span>
+                    <span className="text-[9px] font-black text-orange-600 uppercase tracking-widest leading-none">{u.role === Role.LEADER ? 'RESP. MANTO.' : u.role}</span>
                   </div>
                 </div>
                 <div className="flex flex-col gap-2">
                   <select className="bg-white border border-slate-100 p-2 rounded-xl text-[9px] font-black uppercase outline-none focus:border-orange-500" value={u.role} onChange={e => updateRole(u.id, e.target.value as Role)}>
                     <option value={Role.OPERATOR}>OPERARIO</option>
-                    <option value={Role.LEADER}>LÍDER</option>
+                    <option value={Role.LEADER}>RESP. MANTO.</option>
                     <option value={Role.MANAGER}>GERENCIA</option>
                   </select>
                 </div>
