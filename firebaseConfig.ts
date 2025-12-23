@@ -1,11 +1,11 @@
 
-// Fix: Use standard Firebase v9+ modular imports for all modules
+// Use standard Firebase v9+ modular imports for all modules
 import { initializeApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
 import { getAnalytics, isSupported } from "firebase/analytics";
 
 // En Vite/Vercel, usamos import.meta.env
-// Añadimos fallbacks vacíos para evitar que initializeApp explote si no están definidas
+// Añadimos fallbacks vacíos para evitar que initializeApp falle si no están definidas
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "",
   authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "",
@@ -18,10 +18,10 @@ const firebaseConfig = {
 
 // Log de advertencia si faltan llaves (solo en consola)
 if (!firebaseConfig.apiKey) {
-  console.warn("Firebase: Las variables de entorno no están configuradas. La base de datos no conectará.");
+  console.warn("Firebase: Las variables de entorno no están configuradas.");
 }
 
-// Inicialización de Firebase
+// Inicialización de Firebase Modular v9
 const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app);
 
