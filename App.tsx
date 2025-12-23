@@ -79,14 +79,18 @@ export default function App() {
   const [records, setRecords] = useState<MaintenanceRecord[]>([]);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [view, setView] = useState<'LOGIN' | 'DASHBOARD'>('LOGIN');
-  const [apiKeySelected, setApiKeySelected] = useState<boolean>(true);
+  // Fix: Default to false to ensure API key check happens before app access per guidelines
+  const [apiKeySelected, setApiKeySelected] = useState<boolean>(false);
 
   useEffect(() => {
     const checkKey = async () => {
-      // Fix: Use window.aistudio.hasSelectedApiKey() directly
+      // Fix: Use window.aistudio.hasSelectedApiKey() directly to check for key presence
       if ((window as any).aistudio?.hasSelectedApiKey) {
         const hasKey = await (window as any).aistudio.hasSelectedApiKey();
         setApiKeySelected(hasKey);
+      } else {
+        // Fallback for local development or non-AI Studio environments
+        setApiKeySelected(true);
       }
     };
     checkKey();
@@ -126,9 +130,11 @@ export default function App() {
   };
 
   const handleOpenKeyDialog = async () => {
-    // Fix: Trigger API key selection as required for Gemini 3 models
-    await (window as any).aistudio.openSelectKey();
-    // Fix: Proceed assuming the key selection was successful as per guidelines to avoid race condition
+    // Fix: Trigger API key selection dialog as required
+    if ((window as any).aistudio?.openSelectKey) {
+      await (window as any).aistudio.openSelectKey();
+    }
+    // Fix: Proceed assuming the key selection was successful to avoid race conditions per guidelines
     setApiKeySelected(true);
   };
 
@@ -214,16 +220,16 @@ const OperatorView: React.FC<{ user: User; machines: Machine[]; onResetKey: () =
     if (!obs.trim()) return;
     setIsAnalyzing(true);
     try {
-      // Fix: Initialize GoogleGenAI with process.env.API_KEY right before use
+      // Fix: Initialize GoogleGenAI with process.env.API_KEY right before use to ensure the latest key is applied
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       const response = await ai.models.generateContent({
         model: 'gemini-3-flash-preview',
         contents: `Analiza esta observación técnica: "${obs}". Identifica nivel de riesgo (Bajo/Medio/Alto) y acción sugerida. Máximo 20 palabras.`,
       });
-      // Fix: Access response.text property (not a method)
-      setAiAnalysis(response.text);
+      // Fix: Access response.text property directly as per modern SDK guidelines
+      setAiAnalysis(response.text || "No se pudo obtener una respuesta clara.");
     } catch (e: any) {
-      // Fix: Reset key selection if entity not found
+      // Fix: Handle the "not found" error by resetting the key state as per Veo/Gemini 3 guidelines
       if (e?.message?.toLowerCase().includes("not found")) onResetKey();
     } finally { setIsAnalyzing(false); }
   };
@@ -317,14 +323,14 @@ const ManagerView: React.FC<{ users: User[]; machines: Machine[]; records: Maint
   const getAiAudit = async () => {
     setLoading(true);
     try {
-      // Fix: Initialize GoogleGenAI with process.env.API_KEY right before use
+      // Fix: Initialize GoogleGenAI right before the API call to use the latest configured project key
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       const prompt = `Analiza: ${JSON.stringify(records.slice(0, 10))}. Resume los 3 problemas de mantenimiento más frecuentes detectados en la planta este mes.`;
       const result = await ai.models.generateContent({ model: 'gemini-3-pro-preview', contents: prompt });
-      // Fix: Access result.text property (not a method)
-      setAiReport(result.text);
+      // Fix: Correctly access the .text property from the response
+      setAiReport(result.text || "Reporte vacío.");
     } catch (e: any) {
-      // Fix: Reset key selection if entity not found
+      // Fix: Handle auth/key failures by prompting a re-selection
       if (e?.message?.toLowerCase().includes("not found")) onResetKey();
     } finally { setLoading(false); }
   };
@@ -374,4 +380,4 @@ const ManagerView: React.FC<{ users: User[]; machines: Machine[]; records: Maint
       )}
     </div>
   );
-};
+}
