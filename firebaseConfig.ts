@@ -1,20 +1,25 @@
 
-// Fix: Use correct modular import for Firebase v9+ to resolve 'no exported member initializeApp' error
+// Fix: Use standard Firebase v9+ modular imports for all modules
 import { initializeApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
 import { getAnalytics, isSupported } from "firebase/analytics";
 
-// En Vite y Vercel, las variables configuradas en el panel (ej. VITE_FIREBASE_API_KEY)
-// se acceden mediante import.meta.env
+// En Vite/Vercel, usamos import.meta.env
+// Añadimos fallbacks vacíos para evitar que initializeApp explote si no están definidas
 const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-  appId: import.meta.env.VITE_FIREBASE_APP_ID,
-  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "",
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "",
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || "",
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "",
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "",
+  appId: import.meta.env.VITE_FIREBASE_APP_ID || "",
+  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || ""
 };
+
+// Log de advertencia si faltan llaves (solo en consola)
+if (!firebaseConfig.apiKey) {
+  console.warn("Firebase: Las variables de entorno no están configuradas. La base de datos no conectará.");
+}
 
 // Inicialización de Firebase
 const app = initializeApp(firebaseConfig);
