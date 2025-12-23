@@ -1,50 +1,16 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
-  Users, 
-  Settings, 
-  BarChart3, 
-  CheckCircle2, 
-  AlertTriangle, 
-  Wrench, 
-  LogOut, 
-  MessageSquare, 
-  ClipboardList,
-  Database,
-  Plus,
-  UserPlus,
-  History,
-  HardDrive,
-  UserCog,
-  LayoutDashboard,
-  X,
-  Calendar,
-  Filter,
-  Trophy,
-  Search
+  Users, Settings, BarChart3, CheckCircle2, AlertTriangle, Wrench, LogOut, 
+  MessageSquare, ClipboardList, Database, Plus, UserPlus, History, HardDrive, 
+  UserCog, LayoutDashboard, X, Calendar, Filter, Trophy, Search, Lock, Fingerprint
 } from 'lucide-react';
 import { 
-  PieChart, 
-  Pie, 
-  Cell, 
-  ResponsiveContainer, 
-  Tooltip, 
-  Legend,
-  BarChart, 
-  Bar, 
-  XAxis, 
-  YAxis, 
-  CartesianGrid 
+  PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend,
+  BarChart, Bar, XAxis, YAxis, CartesianGrid 
 } from 'recharts';
 import { 
-  format, 
-  addDays, 
-  isPast, 
-  parseISO, 
-  startOfMonth, 
-  isSameMonth,
-  isWithinInterval,
-  startOfDay,
-  endOfDay
+  format, addDays, isPast, parseISO, startOfMonth, isSameMonth, 
+  isWithinInterval, startOfDay, endOfDay 
 } from 'date-fns';
 import { Role, User, Machine, MaintenanceRecord, MaintenanceType } from './types';
 
@@ -70,22 +36,24 @@ const setDB = (key: string, data: any) => {
 const IndustrialButton: React.FC<{
   children: React.ReactNode;
   onClick?: () => void;
-  variant?: 'primary' | 'secondary' | 'danger' | 'success' | 'outline';
+  variant?: 'primary' | 'secondary' | 'danger' | 'success' | 'outline' | 'dark';
   className?: string;
   fullWidth?: boolean;
   type?: "button" | "submit" | "reset";
-}> = ({ children, onClick, variant = 'primary', className = '', fullWidth = false, type = "button" }) => {
-  const baseStyles = "px-6 py-4 font-extrabold text-sm uppercase tracking-widest transition-all active:scale-95 flex items-center justify-center gap-3 rounded-2xl shadow-md disabled:opacity-50";
+  disabled?: boolean;
+}> = ({ children, onClick, variant = 'primary', className = '', fullWidth = false, type = "button", disabled = false }) => {
+  const baseStyles = "px-6 py-4 font-extrabold text-sm uppercase tracking-widest transition-all active:scale-95 flex items-center justify-center gap-3 rounded-2xl shadow-md disabled:opacity-50 disabled:cursor-not-allowed";
   const variants = {
     primary: "bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white shadow-orange-100",
     secondary: "bg-gradient-to-r from-amber-700 to-amber-800 hover:from-amber-800 hover:to-amber-900 text-white shadow-amber-200",
     danger: "bg-gradient-to-r from-red-600 to-red-700 hover:from-red-700 hover:to-red-800 text-white shadow-red-200",
     success: "bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-600 hover:to-emerald-700 text-white shadow-emerald-200",
-    outline: "bg-white border-2 border-slate-200 text-slate-600 hover:bg-slate-50 hover:border-orange-400"
+    outline: "bg-white border-2 border-slate-200 text-slate-600 hover:bg-slate-50 hover:border-orange-400",
+    dark: "bg-slate-900 text-white hover:bg-slate-800 border border-slate-700"
   };
 
   return (
-    <button type={type} onClick={onClick} className={`${baseStyles} ${variants[variant]} ${fullWidth ? 'w-full' : ''} ${className}`}>
+    <button type={type} onClick={onClick} disabled={disabled} className={`${baseStyles} ${variants[variant]} ${fullWidth ? 'w-full' : ''} ${className}`}>
       {children}
     </button>
   );
@@ -97,6 +65,40 @@ const Card: React.FC<{ children: React.ReactNode; className?: string }> = ({ chi
   </div>
 );
 
+// Componente de Modal de PIN (Firma Digital)
+const PinModal: React.FC<{ isOpen: boolean; onClose: () => void; onConfirm: (pin: string) => void; title: string }> = ({ isOpen, onClose, onConfirm, title }) => {
+  const [pin, setPin] = useState('');
+  
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-sm z-[200] flex items-center justify-center p-4 animate-in fade-in duration-200">
+      <Card className="w-full max-w-sm text-center">
+        <div className="bg-slate-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 text-slate-500">
+          <Fingerprint className="w-8 h-8" />
+        </div>
+        <h3 className="text-xl font-black uppercase text-slate-900 mb-2">Firma Digital</h3>
+        <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-6">{title}</p>
+        
+        <input 
+          type="password" 
+          maxLength={4}
+          placeholder="Ingrese su PIN (4 dígitos)"
+          className="w-full text-center text-3xl font-black tracking-[1em] p-4 border-b-4 border-orange-500 outline-none mb-8 bg-transparent"
+          value={pin}
+          onChange={(e) => setPin(e.target.value.replace(/[^0-9]/g, ''))}
+          autoFocus
+        />
+        
+        <div className="space-y-3">
+          <IndustrialButton fullWidth onClick={() => { onConfirm(pin); setPin(''); }}>Firmar y Confirmar</IndustrialButton>
+          <button onClick={onClose} className="text-xs font-bold text-slate-400 uppercase hover:text-red-500 transition-colors">Cancelar Operación</button>
+        </div>
+      </Card>
+    </div>
+  );
+};
+
 // --- MAIN APPLICATION ---
 
 export default function App() {
@@ -105,6 +107,10 @@ export default function App() {
   const [records, setRecords] = useState<MaintenanceRecord[]>([]);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [view, setView] = useState<'LOGIN' | 'DASHBOARD'>('LOGIN');
+
+  // Estados para Login Admin
+  const [showAdminLogin, setShowAdminLogin] = useState(false);
+  const [adminPass, setAdminPass] = useState('');
 
   useEffect(() => {
     setUsers(getDB(STORAGE_KEYS.USERS, []));
@@ -128,10 +134,11 @@ export default function App() {
   };
 
   const seedDB = () => {
+    // AGREGAMOS PIN POR DEFECTO "1234" A TODOS
     const initialUsers: User[] = [
-      { id: 'u1', name: 'Juan Operario', role: Role.OPERATOR, phone: '5491112345678' },
-      { id: 'u2', name: 'Pedro Líder', role: Role.LEADER, phone: '5491112345678' },
-      { id: 'u3', name: 'Ana Gerente', role: Role.MANAGER },
+      { id: 'u1', name: 'Juan Operario', role: Role.OPERATOR, phone: '5491112345678', pin: '1234' },
+      { id: 'u2', name: 'Pedro Líder', role: Role.LEADER, phone: '5491112345678', pin: '1234' },
+      { id: 'u3', name: 'Ana Gerente', role: Role.MANAGER, pin: '9999' }, // El pin de gerencia es para firmar auditorías (futuro)
     ];
     const initialMachines: Machine[] = [
       { id: 'm1', name: 'Inyectora Plástico I-01', assignedTo: 'u1', lastMaintenance: new Date(Date.now() - 20 * 86400000).toISOString(), intervalDays: 15 },
@@ -142,7 +149,7 @@ export default function App() {
     persistMachines(initialMachines);
     setRecords([]);
     setDB(STORAGE_KEYS.RECORDS, []);
-    alert("Sistema Reiniciado Correctamente.");
+    alert("Sistema Reiniciado. PIN por defecto para todos: 1234");
   };
 
   const handleLogin = (userId: string) => {
@@ -154,13 +161,30 @@ export default function App() {
     }
   };
 
+  const handleAdminLogin = () => {
+    if (adminPass === 'admin123') { // CONTRASEÑA MAESTRA FIJA
+      // Buscamos al primer gerente disponible o creamos uno temporal
+      const adminUser = users.find(u => u.role === Role.MANAGER);
+      if (adminUser) {
+        setCurrentUser(adminUser);
+        localStorage.setItem(STORAGE_KEYS.AUTH, JSON.stringify(adminUser));
+        setView('DASHBOARD');
+        setShowAdminLogin(false);
+        setAdminPass('');
+      } else {
+        alert("Error: No existe usuario Gerente en la base de datos. Ejecute 'Inicializar Planta'.");
+      }
+    } else {
+      alert("Acceso Denegado: Contraseña incorrecta.");
+    }
+  };
+
   const handleLogout = () => {
     setCurrentUser(null);
     localStorage.removeItem(STORAGE_KEYS.AUTH);
     setView('LOGIN');
   };
 
-  // Helper para mostrar nombres bonitos de roles
   const getRoleDisplayName = (role?: Role) => {
     if (role === Role.LEADER) return "RESP. MANTENIMIENTO GRAL.";
     if (role === Role.MANAGER) return "GERENCIA DE PLANTA";
@@ -168,9 +192,34 @@ export default function App() {
   };
 
   if (view === 'LOGIN') {
+    // FILTRAR: Solo mostramos OPERARIOS y LIDERES en la lista pública
+    const publicUsers = users.filter(u => u.role !== Role.MANAGER);
+
     return (
-      <div className="flex flex-col items-center justify-center min-h-screen bg-white p-6">
-        <div className="w-full max-w-md space-y-12">
+      <div className="flex flex-col items-center justify-center min-h-screen bg-white p-6 relative overflow-hidden">
+        
+        {/* MODAL ADMIN LOGIN */}
+        {showAdminLogin && (
+          <div className="fixed inset-0 bg-slate-900/90 z-50 flex items-center justify-center p-6 animate-in fade-in duration-300">
+            <Card className="w-full max-w-md border-slate-700 bg-slate-800 text-white shadow-2xl">
+              <div className="flex justify-between items-center mb-6">
+                <h3 className="text-xl font-black uppercase flex items-center gap-3"><Lock className="text-orange-500"/> Acceso Restringido</h3>
+                <button onClick={() => setShowAdminLogin(false)}><X className="text-slate-400 hover:text-white"/></button>
+              </div>
+              <p className="text-sm text-slate-400 mb-6 font-medium">Área exclusiva para Gerencia Técnica y Auditoría. Ingrese sus credenciales.</p>
+              <input 
+                type="password" 
+                placeholder="Contraseña de Administración"
+                className="w-full p-4 rounded-xl bg-slate-900 border border-slate-600 text-white font-bold mb-6 outline-none focus:border-orange-500"
+                value={adminPass}
+                onChange={e => setAdminPass(e.target.value)}
+              />
+              <IndustrialButton fullWidth onClick={handleAdminLogin}>Ingresar al Panel</IndustrialButton>
+            </Card>
+          </div>
+        )}
+
+        <div className="w-full max-w-md space-y-12 relative z-10">
           <div className="text-center space-y-4">
             <div className="inline-block p-5 bg-orange-100 rounded-[2rem] text-orange-600 shadow-lg shadow-orange-100">
               <Settings className="w-16 h-16 animate-spin-slow" />
@@ -178,15 +227,22 @@ export default function App() {
             <h1 className="text-6xl font-black uppercase tracking-tighter text-slate-900 leading-none">TPM <span className="text-orange-600 underline decoration-amber-500">PRO</span></h1>
             <p className="text-slate-400 font-bold uppercase tracking-[0.2em] text-[10px]">Portal de Acceso Industrial</p>
           </div>
-          <div className="bg-white p-10 rounded-[3rem] shadow-2xl border border-slate-50 space-y-8">
+          <div className="bg-white p-10 rounded-[3rem] shadow-2xl border border-slate-50 space-y-8 relative">
             <div className="space-y-2">
-              <label className="text-[10px] font-black uppercase text-slate-400 ml-2">Personal Identificado</label>
+              <label className="text-[10px] font-black uppercase text-slate-400 ml-2">Personal de Planta</label>
               <select className="w-full bg-slate-50 border-2 border-slate-100 p-5 rounded-2xl text-lg font-bold outline-none appearance-none cursor-pointer focus:border-orange-500 transition-all" onChange={(e) => handleLogin(e.target.value)} value="">
                 <option value="" disabled>-- Seleccione su Identidad --</option>
-                {users.map(u => <option key={u.id} value={u.id}>{u.name} | {getRoleDisplayName(u.role)}</option>)}
+                {publicUsers.map(u => <option key={u.id} value={u.id}>{u.name} | {getRoleDisplayName(u.role)}</option>)}
               </select>
             </div>
             {users.length === 0 && <IndustrialButton fullWidth variant="secondary" onClick={seedDB}>Inicializar Planta</IndustrialButton>}
+            
+            {/* BOTON DE GERENCIA DISCRETO */}
+            <div className="pt-4 border-t border-slate-100 flex justify-center">
+              <button onClick={() => setShowAdminLogin(true)} className="flex items-center gap-2 text-[10px] font-black uppercase text-slate-300 hover:text-orange-600 transition-colors tracking-widest">
+                <Lock className="w-3 h-3" /> Acceso Gerencial
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -229,12 +285,25 @@ const OperatorView: React.FC<{ user: User; machines: Machine[]; setMachines: any
   const [checklist, setChecklist] = useState<boolean[]>(new Array(5).fill(false));
   const [obs, setObs] = useState('');
   const [isCritical, setIsCritical] = useState(false);
+  const [showPinModal, setShowPinModal] = useState(false);
 
   const myMachines = machines.filter(m => m.assignedTo === user.id);
   const availableMachines = machines.filter(m => !m.assignedTo);
 
-  const submitManto = () => {
+  const requestSignature = () => {
     if (!selectedMachine || checklist.some(c => !c)) return alert("Debe tildar todos los puntos de seguridad.");
+    setShowPinModal(true);
+  };
+
+  const finalizeManto = (pin: string) => {
+    // VALIDACION DEL PIN (FIRMA DIGITAL)
+    if (pin !== user.pin) {
+      alert("ERROR DE FIRMA: El PIN ingresado es incorrecto. No se puede certificar.");
+      return;
+    }
+
+    if (!selectedMachine) return;
+
     const newRecord: MaintenanceRecord = {
       id: Math.random().toString(36).substr(2, 9),
       machineId: selectedMachine.id,
@@ -250,12 +319,15 @@ const OperatorView: React.FC<{ user: User; machines: Machine[]; setMachines: any
     setSelectedMachine(null);
     setIsCritical(false);
     setObs('');
-    alert("Tarea registrada correctamente.");
+    setShowPinModal(false);
+    alert("Firma Válida. Tarea registrada y certificada correctamente.");
   };
 
   if (selectedMachine) {
     return (
-      <Card className="max-w-2xl mx-auto border-orange-200 shadow-orange-100">
+      <Card className="max-w-2xl mx-auto border-orange-200 shadow-orange-100 relative">
+        <PinModal isOpen={showPinModal} onClose={() => setShowPinModal(false)} onConfirm={finalizeManto} title="Confirme su identidad para certificar la tarea" />
+        
         <button onClick={() => setSelectedMachine(null)} className="text-[10px] font-black uppercase text-orange-600 mb-8 flex items-center gap-2 tracking-widest">← Volver a Mis Equipos</button>
         <div className="mb-8">
           <h2 className="text-4xl font-black text-slate-800 uppercase tracking-tighter">{selectedMachine.name}</h2>
@@ -276,7 +348,7 @@ const OperatorView: React.FC<{ user: User; machines: Machine[]; setMachines: any
         </div>
 
         <textarea className="w-full p-6 border-2 border-slate-100 rounded-[2rem] mb-8 h-32 outline-none focus:border-orange-500 font-medium text-lg" placeholder="Añadir observaciones técnicas..." value={obs} onChange={e => setObs(e.target.value)} />
-        <IndustrialButton fullWidth onClick={submitManto}>Certificar Mantenimiento</IndustrialButton>
+        <IndustrialButton fullWidth onClick={requestSignature}>Certificar Mantenimiento</IndustrialButton>
       </Card>
     );
   }
@@ -349,6 +421,7 @@ const LeaderView: React.FC<{ user: User; machines: Machine[]; setMachines: any; 
   const [selectedMachine, setSelectedMachine] = useState<Machine | null>(null);
   const [checklist, setChecklist] = useState<boolean[]>(new Array(5).fill(false));
   const [mantoObs, setMantoObs] = useState('');
+  const [showPinModal, setShowPinModal] = useState(false);
 
   const issues = records.filter(r => r.isIssue);
   const myMachines = machines.filter(m => m.assignedTo === user.id);
@@ -367,9 +440,20 @@ const LeaderView: React.FC<{ user: User; machines: Machine[]; setMachines: any; 
     alert("Incidencia cerrada y archivada.");
   };
 
-  // --- LOGICA MANTENIMIENTO LIDER ---
-  const submitLeaderManto = () => {
+  const requestLeaderSignature = () => {
     if (!selectedMachine || checklist.some(c => !c)) return alert("Debe completar todo el checklist de seguridad avanzada.");
+    setShowPinModal(true);
+  };
+
+  // --- LOGICA MANTENIMIENTO LIDER ---
+  const finalizeLeaderManto = (pin: string) => {
+    // VALIDACION PIN
+    if (pin !== user.pin) {
+      alert("ERROR DE FIRMA: Credenciales de Liderazgo inválidas.");
+      return;
+    }
+
+    if (!selectedMachine) return;
     
     // Guardamos el registro
     const newRecord: MaintenanceRecord = {
@@ -378,7 +462,7 @@ const LeaderView: React.FC<{ user: User; machines: Machine[]; setMachines: any; 
       userId: user.id,
       date: new Date().toISOString(),
       observations: `MANTENIMIENTO PROFUNDO: ${mantoObs}`,
-      type: MaintenanceType.HEAVY, // Asumimos que el líder hace mantos pesados
+      type: MaintenanceType.HEAVY, 
       isIssue: false
     };
 
@@ -392,13 +476,16 @@ const LeaderView: React.FC<{ user: User; machines: Machine[]; setMachines: any; 
     setSelectedMachine(null);
     setChecklist(new Array(5).fill(false));
     setMantoObs('');
-    alert("Mantenimiento Especializado Registrado.");
+    setShowPinModal(false);
+    alert("Mantenimiento Especializado Certificado por Firma Digital.");
   };
 
   // --- VISTA FORMULARIO DE MANTENIMIENTO (LIDER) ---
   if (selectedMachine) {
     return (
-      <Card className="max-w-2xl mx-auto border-amber-600 shadow-amber-100/50">
+      <Card className="max-w-2xl mx-auto border-amber-600 shadow-amber-100/50 relative">
+        <PinModal isOpen={showPinModal} onClose={() => setShowPinModal(false)} onConfirm={finalizeLeaderManto} title="Firma de Responsable Técnico" />
+
         <button onClick={() => setSelectedMachine(null)} className="text-[10px] font-black uppercase text-amber-700 mb-8 flex items-center gap-2 tracking-widest">← Cancelar Operación</button>
         <div className="mb-8">
           <h2 className="text-4xl font-black text-slate-800 uppercase tracking-tighter">{selectedMachine.name}</h2>
@@ -415,7 +502,7 @@ const LeaderView: React.FC<{ user: User; machines: Machine[]; setMachines: any; 
         </div>
 
         <textarea className="w-full p-6 border-2 border-slate-100 rounded-[2rem] mb-8 h-32 outline-none focus:border-amber-600 font-medium text-lg" placeholder="Detalles técnicos del ajuste..." value={mantoObs} onChange={e => setMantoObs(e.target.value)} />
-        <IndustrialButton variant="secondary" fullWidth onClick={submitLeaderManto}>Firmar Mantenimiento Experto</IndustrialButton>
+        <IndustrialButton variant="secondary" fullWidth onClick={requestLeaderSignature}>Firmar Mantenimiento Experto</IndustrialButton>
       </Card>
     );
   }
@@ -518,7 +605,7 @@ const ManagerView: React.FC<{ users: User[]; setUsers: any; machines: Machine[];
   const [activePanel, setActivePanel] = useState<'STATS' | 'HISTORY' | 'MACHINES' | 'USERS'>('STATS');
   
   // Estados para formularios de alta
-  const [userForm, setUserForm] = useState({ name: '', phone: '', role: Role.OPERATOR });
+  const [userForm, setUserForm] = useState({ name: '', phone: '', role: Role.OPERATOR, pin: '1234' });
   const [machineForm, setMachineForm] = useState({ name: '', interval: 15 });
 
   // Estados para Filtros de Historial (Auditoría)
@@ -594,8 +681,8 @@ const ManagerView: React.FC<{ users: User[]; setUsers: any; machines: Machine[];
     e.preventDefault();
     const newUser: User = { id: 'u' + (users.length + 1), ...userForm };
     setUsers([...users, newUser]);
-    setUserForm({ name: '', phone: '', role: Role.OPERATOR });
-    alert("Colaborador Registrado.");
+    setUserForm({ name: '', phone: '', role: Role.OPERATOR, pin: '1234' });
+    alert("Colaborador Registrado. PIN por defecto: 1234");
   };
 
   const addMachine = (e: React.FormEvent) => {
@@ -878,6 +965,10 @@ const ManagerView: React.FC<{ users: User[]; setUsers: any; machines: Machine[];
               <h3 className="text-2xl font-black text-slate-800 uppercase tracking-tighter flex items-center gap-3"><UserPlus className="text-orange-600" /> Nuevo Colaborador</h3>
               <input required className="w-full p-5 rounded-2xl border-2 border-slate-100 font-bold outline-none focus:border-orange-500 transition-all shadow-inner" placeholder="Nombre y Apellido" value={userForm.name} onChange={e => setUserForm({...userForm, name: e.target.value})} />
               <input className="w-full p-5 rounded-2xl border-2 border-slate-100 font-bold outline-none focus:border-orange-500 transition-all shadow-inner" placeholder="Teléfono (Ej: 549...)" value={userForm.phone} onChange={e => setUserForm({...userForm, phone: e.target.value})} />
+              <div className="space-y-2">
+                 <label className="text-[10px] font-black uppercase text-slate-400 ml-2">Asignar PIN de Seguridad</label>
+                 <input type="password" maxLength={4} className="w-full p-5 rounded-2xl border-2 border-slate-100 font-bold outline-none focus:border-orange-500 transition-all shadow-inner tracking-widest" placeholder="PIN de 4 dígitos" value={userForm.pin} onChange={e => setUserForm({...userForm, pin: e.target.value.replace(/[^0-9]/g, '')})} />
+              </div>
               <select className="w-full p-5 rounded-2xl border-2 border-slate-100 font-bold outline-none focus:border-orange-500 cursor-pointer shadow-inner" value={userForm.role} onChange={e => setUserForm({...userForm, role: e.target.value as Role})}>
                 <option value={Role.OPERATOR}>OPERARIO DE LÍNEA</option>
                 <option value={Role.LEADER}>RESP. MANTENIMIENTO GRAL.</option>
@@ -896,7 +987,8 @@ const ManagerView: React.FC<{ users: User[]; setUsers: any; machines: Machine[];
                     <span className="text-[9px] font-black text-orange-600 uppercase tracking-widest leading-none">{u.role === Role.LEADER ? 'RESP. MANTO.' : u.role}</span>
                   </div>
                 </div>
-                <div className="flex flex-col gap-2">
+                <div className="flex flex-col gap-2 text-right">
+                  <span className="text-[9px] font-bold text-slate-400 uppercase">PIN: ****</span>
                   <select className="bg-white border border-slate-100 p-2 rounded-xl text-[9px] font-black uppercase outline-none focus:border-orange-500" value={u.role} onChange={e => updateRole(u.id, e.target.value as Role)}>
                     <option value={Role.OPERATOR}>OPERARIO</option>
                     <option value={Role.LEADER}>RESP. MANTO.</option>
