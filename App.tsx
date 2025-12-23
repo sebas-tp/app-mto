@@ -3,7 +3,7 @@ import {
   Users, Settings, BarChart3, CheckCircle2, AlertTriangle, Wrench, LogOut, 
   MessageSquare, ClipboardList, Database, Plus, UserPlus, History, HardDrive, 
   UserCog, LayoutDashboard, X, Calendar as CalendarIcon, Filter, Trophy, Search, Lock, Fingerprint, Loader2,
-  Trash2, Pencil, FileSpreadsheet, FileText, ChevronLeft, ChevronRight, Download
+  Trash2, Pencil, FileSpreadsheet, FileText, ChevronLeft, ChevronRight, Clock
 } from 'lucide-react';
 import { 
   PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend,
@@ -11,9 +11,8 @@ import {
 } from 'recharts';
 import { 
   format, addDays, isPast, parseISO, startOfMonth, isSameMonth, 
-  isWithinInterval, startOfDay, endOfDay, eachDayOfInterval, endOfMonth, getDay, startOfWeek, endOfWeek, isSameDay, addMonths, subMonths
+  isWithinInterval, startOfDay, endOfDay, eachDayOfInterval, endOfMonth, startOfWeek, endOfWeek, isSameDay, addMonths, subMonths
 } from 'date-fns';
-import { es } from 'date-fns/locale'; // Para calendario en español si se configurara, aqui lo haré manual para no pedir instalar locale
 
 // --- FIREBASE IMPORTS ---
 import { db, auth } from './firebaseConfig'; 
@@ -71,6 +70,117 @@ const PinModal: React.FC<{ isOpen: boolean; onClose: () => void; onConfirm: (pin
         <div className="space-y-3"><IndustrialButton fullWidth onClick={() => { onConfirm(pin); setPin(''); }}>Firmar y Confirmar</IndustrialButton><button onClick={onClose} className="text-xs font-bold text-slate-400 uppercase hover:text-red-500 transition-colors">Cancelar Operación</button></div>
       </Card>
     </div>
+  );
+};
+
+// --- COMPONENTE DE CALENDARIO REUTILIZABLE ---
+const MiniCalendar: React.FC<{ 
+  machines: Machine[], 
+  records: MaintenanceRecord[], 
+  user?: User, 
+  mode: 'MANAGER' | 'OPERATOR' 
+}> = ({ machines, records, user, mode }) => {
+  const [currentMonth, setCurrentMonth] = useState(new Date());
+  const [selectedDay, setSelectedDay] = useState<Date | null>(null);
+
+  const calendarDays = useMemo(() => {
+    return eachDayOfInterval({ start: startOfWeek(startOfMonth(currentMonth)), end: endOfWeek(endOfMonth(currentMonth)) });
+  }, [currentMonth]);
+
+  // LOGICA DE PUNTOS DEL CALENDARIO
+  const getDayStatus = (date: Date) => {
+    // 1. Historial (Lo que YA pasó)
+    const dayRecords = records.filter(r => isSameDay(parseISO(r.date), date) && (mode === 'MANAGER' || r.userId === user?.id));
+    
+    // 2. Futuro (Lo que DEBE pasar - Solo para Operarios/Líderes)
+    let hasFutureDue = false;
+    if (mode === 'OPERATOR' && user) {
+      const myMachines = machines.filter(m => m.assignedTo === user.id);
+      hasFutureDue = myMachines.some(m => {
+        const nextDate = addDays(parseISO(m.lastMaintenance), m.intervalDays);
+        return isSameDay(nextDate, date);
+      });
+    }
+
+    if (dayRecords.some(r => r.isIssue)) return 'issue'; // Rojo (Falla reportada)
+    if (dayRecords.length > 0) return 'done'; // Verde (Hecho)
+    if (hasFutureDue) return isPast(date) && !isSameDay(date, new Date()) ? 'missed' : 'planned'; // Naranja (Pendiente) o Rojo Oscuro (Perdido)
+    
+    return 'none';
+  };
+
+  const getDetails = (date: Date) => {
+    // Registros hechos
+    const done = records.filter(r => isSameDay(parseISO(r.date), date) && (mode === 'MANAGER' || r.userId === user?.id));
+    // Pendientes (Solo Operador)
+    let pending: Machine[] = [];
+    if (mode === 'OPERATOR' && user) {
+      pending = machines.filter(m => m.assignedTo === user.id && isSameDay(addDays(parseISO(m.lastMaintenance), m.intervalDays), date));
+    }
+    return { done, pending };
+  };
+
+  return (
+    <Card className="h-full flex flex-col">
+      <div className="flex justify-between items-center mb-4">
+        <h3 className="text-sm font-black uppercase flex items-center gap-2"><CalendarIcon className="w-4 h-4 text-orange-600" /> {mode === 'MANAGER' ? 'Auditoría Global' : 'Mi Turno'}</h3>
+        <div className="flex gap-1">
+          <button onClick={() => setCurrentMonth(subMonths(currentMonth, 1))} className="p-1 hover:bg-slate-100 rounded-lg"><ChevronLeft className="w-4 h-4"/></button>
+          <span className="text-xs font-black uppercase py-1 px-2 bg-slate-50 rounded-lg min-w-[80px] text-center">{format(currentMonth, 'MMM yyyy')}</span>
+          <button onClick={() => setCurrentMonth(addMonths(currentMonth, 1))} className="p-1 hover:bg-slate-100 rounded-lg"><ChevronRight className="w-4 h-4"/></button>
+        </div>
+      </div>
+      
+      <div className="grid grid-cols-7 gap-1 mb-1">
+        {['D','L','M','M','J','V','S'].map(d => <div key={d} className="text-center text-[9px] font-black text-slate-400">{d}</div>)}
+      </div>
+      <div className="grid grid-cols-7 gap-1">
+        {calendarDays.map((day, idx) => {
+          const status = getDayStatus(day);
+          const isCurrentMonth = isSameMonth(day, currentMonth);
+          const isSelected = selectedDay && isSameDay(day, selectedDay);
+          return (
+            <div 
+              key={idx} 
+              onClick={() => setSelectedDay(day)}
+              className={`
+                h-8 rounded-lg border flex flex-col items-center justify-center cursor-pointer transition-all hover:scale-105 relative
+                ${!isCurrentMonth ? 'opacity-20' : ''}
+                ${isSelected ? 'border-orange-500 bg-orange-50' : 'border-slate-50 bg-white'}
+              `}
+            >
+              <span className="text-[10px] font-bold text-slate-700">{format(day, 'd')}</span>
+              <div className="flex gap-0.5 mt-0.5">
+                {status === 'issue' && <div className="w-1.5 h-1.5 rounded-full bg-red-500"></div>}
+                {status === 'done' && <div className="w-1.5 h-1.5 rounded-full bg-emerald-500"></div>}
+                {status === 'planned' && <div className="w-1.5 h-1.5 rounded-full bg-orange-400"></div>}
+                {status === 'missed' && <div className="w-1.5 h-1.5 rounded-full bg-red-800"></div>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* DETALLES COMPACTOS */}
+      {selectedDay && (
+        <div className="mt-4 pt-4 border-t border-slate-100 overflow-y-auto max-h-32">
+          <p className="text-[9px] font-black uppercase text-slate-400 mb-2">{format(selectedDay, 'dd/MM/yyyy')}</p>
+          {getDetails(selectedDay).done.map(r => (
+            <div key={r.id} className="flex justify-between items-center mb-2 text-xs">
+              <span className="font-bold text-slate-700 truncate w-32">{machines.find(m => m.id === r.machineId)?.name}</span>
+              {r.isIssue ? <span className="text-red-600 font-black">FALLA</span> : <span className="text-emerald-600 font-black">OK</span>}
+            </div>
+          ))}
+          {getDetails(selectedDay).pending.map(m => (
+            <div key={m.id} className="flex justify-between items-center mb-2 text-xs">
+              <span className="font-bold text-slate-700 truncate w-32">{m.name}</span>
+              <span className="text-orange-500 font-black flex items-center gap-1"><Clock className="w-3 h-3"/> TOCA HOY</span>
+            </div>
+          ))}
+          {getDetails(selectedDay).done.length === 0 && getDetails(selectedDay).pending.length === 0 && <p className="text-center text-[10px] text-slate-300 italic">Sin eventos</p>}
+        </div>
+      )}
+    </Card>
   );
 };
 
@@ -260,7 +370,6 @@ export default function App() {
   );
 }
 
-// ... OperatorView y LeaderView no cambian, por brevedad ...
 const OperatorView: React.FC<{ user: User; machines: Machine[]; records: MaintenanceRecord[] }> = ({ user, machines, records }) => {
   const [selectedMachine, setSelectedMachine] = useState<Machine | null>(null);
   const [checklist, setChecklist] = useState<boolean[]>(new Array(5).fill(false));
@@ -291,7 +400,11 @@ const OperatorView: React.FC<{ user: User; machines: Machine[]; records: Mainten
 
   return (
     <div className="space-y-12">
-      <div className="flex justify-between items-end"><div><h2 className="text-5xl font-black text-slate-900 uppercase tracking-tighter leading-none">Mi Panel</h2><p className="text-slate-400 font-bold uppercase text-[10px] tracking-widest mt-3">Estado de Máquinas Bajo Control</p></div><ClipboardList className="w-12 h-12 text-orange-500 opacity-20" /></div>
+      <div className="flex flex-col md:flex-row justify-between items-end gap-8">
+        <div><h2 className="text-5xl font-black text-slate-900 uppercase tracking-tighter leading-none">Mi Panel</h2><p className="text-slate-400 font-bold uppercase text-[10px] tracking-widest mt-3">Estado de Máquinas Bajo Control</p></div>
+        {/* CALENDARIO PEQUEÑO PARA OPERARIO */}
+        <div className="w-full md:w-80 h-64"><MiniCalendar machines={machines} records={records} user={user} mode="OPERATOR" /></div>
+      </div>
       {myMachines.length > 0 ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">{myMachines.map(m => { const isDue = isPast(addDays(parseISO(m.lastMaintenance), m.intervalDays)); return (<Card key={m.id} className={isDue ? 'border-red-500 shadow-red-100' : 'border-emerald-500 shadow-emerald-100'}><div className="flex justify-between mb-4"><div className={`p-3 rounded-2xl ${isDue ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-600'}`}><Wrench className="w-6 h-6" /></div>{isDue && <span className="text-[9px] font-black bg-red-600 text-white px-3 py-1 rounded-full animate-pulse uppercase tracking-widest">Atención Requerida</span>}</div><h3 className="text-2xl font-black text-slate-800 uppercase mb-4 leading-tight">{m.name}</h3><div className="space-y-2 mb-8"><p className="text-[10px] font-black text-slate-400 uppercase">Frecuencia: {m.intervalDays} días</p><p className="text-[10px] font-black text-slate-400 uppercase">ID Equipo: {m.id}</p></div><IndustrialButton fullWidth variant={isDue ? 'primary' : 'outline'} onClick={() => { setSelectedMachine(m); setChecklist(new Array(5).fill(false)); }}>Realizar Manto.</IndustrialButton></Card>); })}</div>
       ) : (<div className="bg-white p-16 rounded-[3rem] border-2 border-dashed border-orange-200 text-center shadow-inner"><div className="bg-orange-100 w-20 h-20 rounded-3xl flex items-center justify-center mx-auto mb-6 text-orange-600"><AlertTriangle className="w-10 h-10" /></div><p className="text-2xl font-black text-slate-800 uppercase tracking-tighter mb-2">Sin Asignaciones</p><p className="text-slate-400 font-bold uppercase text-xs">No tiene máquinas a cargo.</p></div>)}
@@ -330,7 +443,13 @@ const LeaderView: React.FC<{ user: User; machines: Machine[]; records: Maintenan
   return (
     <div className="space-y-16 relative">
       {closingIssue && (<div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4"><Card className="w-full max-w-lg animate-in fade-in zoom-in duration-200"><div className="flex justify-between items-center mb-6"><h3 className="text-2xl font-black uppercase text-slate-800">Cierre Técnico</h3><button onClick={() => setClosingIssue(null)}><X className="w-6 h-6 text-slate-400 hover:text-red-500" /></button></div><p className="text-sm font-bold text-slate-500 uppercase mb-4">Resolución de falla en: <span className="text-slate-900">{machines.find(m => m.id === closingIssue.machineId)?.name}</span></p><div className="bg-red-50 p-4 rounded-xl border border-red-100 mb-6"><p className="text-[10px] text-red-400 font-black uppercase mb-1">Reporte Original:</p><p className="text-red-800 italic font-medium">"{closingIssue.observations}"</p></div><textarea autoFocus className="w-full p-4 bg-slate-50 border-2 border-slate-200 rounded-2xl mb-6 outline-none focus:border-orange-500 font-medium" placeholder="Solución aplicada..." rows={4} value={closingComment} onChange={e => setClosingComment(e.target.value)} /><IndustrialButton fullWidth onClick={handleCloseIssue}>Confirmar Solución</IndustrialButton></Card></div>)}
-      <div className="flex justify-between items-end"><div><h2 className="text-4xl md:text-5xl font-black text-slate-900 uppercase tracking-tighter leading-none">Resp. Mantenimiento <span className="text-orange-600">Gral.</span></h2><p className="text-slate-400 font-bold uppercase text-[10px] tracking-widest mt-3">Supervisión de Línea y Equipos Críticos</p></div><Wrench className="w-12 h-12 text-amber-600 opacity-20" /></div>
+      
+      {/* HEADER DE LIDER CON CALENDARIO */}
+      <div className="flex flex-col md:flex-row justify-between items-end gap-8">
+        <div><h2 className="text-4xl md:text-5xl font-black text-slate-900 uppercase tracking-tighter leading-none">Resp. Mantenimiento <span className="text-orange-600">Gral.</span></h2><p className="text-slate-400 font-bold uppercase text-[10px] tracking-widest mt-3">Supervisión de Línea y Equipos Críticos</p></div>
+        <div className="w-full md:w-80 h-64"><MiniCalendar machines={machines} records={records} user={user} mode="OPERATOR" /></div>
+      </div>
+
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-12">
         <div className="space-y-8"><h3 className="text-2xl font-black text-red-600 uppercase flex items-center gap-3"><AlertTriangle className="animate-pulse" /> Alertas de Campo</h3>{issues.length === 0 ? (<div className="bg-white p-12 rounded-[2.5rem] border border-slate-100 text-center"><CheckCircle2 className="w-10 h-10 text-emerald-400 mx-auto mb-4" /><p className="text-slate-400 font-black uppercase text-xs">Sin incidencias</p></div>) : (issues.map(r => (<Card key={r.id} className="border-l-8 border-red-600 bg-red-50/20"><div className="flex justify-between items-start mb-4"><h4 className="text-xl font-black text-slate-800 uppercase tracking-tight">{machines.find(m => m.id === r.machineId)?.name}</h4><span className="text-[9px] font-black bg-red-600 text-white px-3 py-1 rounded-full uppercase">Falla Urgente</span></div><p className="text-slate-600 font-medium italic mb-6 leading-relaxed">"{r.observations}"</p><div className="flex justify-between items-center border-t border-red-100 pt-6"><p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Reporte por Operario</p><button className="text-[10px] font-black text-orange-600 hover:text-orange-700 uppercase tracking-tighter bg-white px-4 py-2 rounded-xl shadow-sm hover:shadow-md transition-all" onClick={() => setClosingIssue(r)}>Resolver Incidencia</button></div></Card>)))}</div>
         <div className="space-y-8"><h3 className="text-2xl font-black text-amber-700 uppercase flex items-center gap-3"><HardDrive /> Mis Equipos Asignados</h3>{myMachines.length === 0 ? (<div className="bg-white p-12 rounded-[2.5rem] border border-slate-100 text-center"><p className="text-slate-400 font-black uppercase text-xs">Sin tareas pesadas a cargo</p></div>) : (myMachines.map(m => { const isDue = isPast(addDays(parseISO(m.lastMaintenance), m.intervalDays)); return (<Card key={m.id} className={isDue ? 'border-red-500 shadow-red-50' : 'border-amber-600'}><div className="flex justify-between items-start mb-6"><h4 className="text-2xl font-black text-slate-800 uppercase tracking-tight leading-none">{m.name}</h4>{isDue && <span className="bg-red-600 text-white text-[9px] px-3 py-1 rounded-full animate-bounce uppercase font-black">Pendiente</span>}</div><div className="bg-slate-50 p-4 rounded-2xl mb-6"><p className="text-[10px] font-black text-slate-400 uppercase mb-1">Último Manto.</p><p className="font-bold text-slate-700">{format(parseISO(m.lastMaintenance), 'dd MMMM, yyyy')}</p></div><IndustrialButton variant="secondary" fullWidth onClick={() => { setSelectedMachine(m); setChecklist(new Array(5).fill(false)); }}>Iniciar Protocolo Experto</IndustrialButton></Card>); }))}</div>
@@ -339,52 +458,27 @@ const LeaderView: React.FC<{ user: User; machines: Machine[]; records: Maintenan
   );
 };
 
-// --- MANAGER VIEW MEJORADA (Calendario y Exportación) ---
 const ManagerView: React.FC<{ users: User[]; machines: Machine[]; records: MaintenanceRecord[] }> = ({ users, machines, records }) => {
   const [activePanel, setActivePanel] = useState<'STATS' | 'HISTORY' | 'MACHINES' | 'USERS'>('STATS');
   const [userForm, setUserForm] = useState({ name: '', phone: '', role: Role.OPERATOR, pin: '1234' });
   const [machineForm, setMachineForm] = useState({ name: '', interval: 15 });
   const [historyFilter, setHistoryFilter] = useState({ userId: 'ALL', dateFrom: '', dateTo: '', type: 'ALL' });
-  
-  // ESTADO PARA EDICIÓN DE MÁQUINAS
   const [editingMachineId, setEditingMachineId] = useState<string | null>(null);
-  
-  // ESTADO PARA CALENDARIO
-  const [currentMonth, setCurrentMonth] = useState(new Date());
-  const [selectedDay, setSelectedDay] = useState<Date | null>(null);
 
-  // --- KPI LOGIC ---
   const stats = useMemo(() => { const total = machines.length; const due = machines.filter(m => isPast(addDays(parseISO(m.lastMaintenance), m.intervalDays))).length; return [{ name: 'Operativo', value: total - due, color: '#10b981' }, { name: 'Vencido', value: due, color: '#ef4444' }]; }, [machines]);
   const maintenanceTypeStats = useMemo(() => { const preventive = records.filter(r => !r.isIssue).length; const corrective = records.filter(r => r.isIssue).length; return [{ name: 'Preventivo', cantidad: preventive }, { name: 'Correctivo', cantidad: corrective }]; }, [records]);
   const ranking = useMemo(() => { const activeStaff = users.filter(u => u.role === Role.OPERATOR || u.role === Role.LEADER); return activeStaff.map(u => ({ ...u, score: records.filter(r => r.userId === u.id).length })).sort((a, b) => b.score - a.score).slice(0, 3); }, [users, records]);
   const filteredRecords = useMemo(() => { return records.filter(r => { const matchUser = historyFilter.userId === 'ALL' || r.userId === historyFilter.userId; let matchDate = true; if (historyFilter.dateFrom && historyFilter.dateTo) { matchDate = isWithinInterval(parseISO(r.date), { start: startOfDay(parseISO(historyFilter.dateFrom)), end: endOfDay(parseISO(historyFilter.dateTo)) }); } const matchType = historyFilter.type === 'ALL' ? true : historyFilter.type === 'ISSUE' ? r.isIssue : !r.isIssue; return matchUser && matchDate && matchType; }).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()); }, [records, historyFilter]);
 
-  // --- CALENDAR LOGIC ---
-  const calendarDays = useMemo(() => {
-    return eachDayOfInterval({ start: startOfWeek(startOfMonth(currentMonth)), end: endOfWeek(endOfMonth(currentMonth)) });
-  }, [currentMonth]);
-
-  const getDayStatus = (date: Date) => {
-    const dayRecords = records.filter(r => isSameDay(parseISO(r.date), date));
-    if (dayRecords.some(r => r.isIssue)) return 'issue'; // Red
-    if (dayRecords.length > 0) return 'ok'; // Green
-    return 'none';
-  };
-
-  const dayDetails = selectedDay ? records.filter(r => isSameDay(parseISO(r.date), selectedDay)) : [];
-
-  // --- EXPORT LOGIC ---
   const exportToCSV = () => {
     const headers = "Fecha,Hora,Maquina,Usuario,Tipo,Observaciones\n";
     const rows = filteredRecords.map(r => {
       const u = users.find(u => u.id === r.userId)?.name || "Desconocido";
       const m = machines.find(m => m.id === r.machineId)?.name || "Eliminada";
       const t = r.isIssue ? "FALLA" : "Mantenimiento";
-      // Sanitize observations to remove commas for CSV safety
       const obs = (r.observations || "").replace(/,/g, " "); 
       return `${format(parseISO(r.date), 'dd/MM/yyyy')},${format(parseISO(r.date), 'HH:mm')},${m},${u},${t},${obs}`;
     }).join("\n");
-
     const blob = new Blob([headers + rows], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement("a");
     const url = URL.createObjectURL(blob);
@@ -395,48 +489,13 @@ const ManagerView: React.FC<{ users: User[]; machines: Machine[]; records: Maint
     document.body.removeChild(link);
   };
 
-  const handlePrint = () => {
-    window.print();
-  };
+  const handlePrint = () => { window.print(); };
 
-  // --- DB WRITES (MANAGER) ---
   const addUser = async (e: React.FormEvent) => { e.preventDefault(); await addDoc(collection(db, "users"), { ...userForm }); setUserForm({ name: '', phone: '', role: Role.OPERATOR, pin: '1234' }); alert("Usuario creado en nube."); };
-  
-  const deleteUser = async (userId: string) => {
-    if(!window.confirm("¿Seguro que desea eliminar a este empleado?")) return;
-    try { await deleteDoc(doc(db, "users", userId)); alert("Empleado eliminado."); } catch(e) { console.error(e); }
-  };
-
-  // --- LOGICA MAQUINAS (ADD / UPDATE / DELETE) ---
-  const handleMachineSubmit = async (e: React.FormEvent) => { 
-    e.preventDefault(); 
-    if (editingMachineId) {
-      await updateDoc(doc(db, "machines", editingMachineId), { 
-        name: machineForm.name, intervalDays: machineForm.interval 
-      });
-      alert("Activo actualizado correctamente.");
-      setEditingMachineId(null);
-    } else {
-      await addDoc(collection(db, "machines"), { 
-        name: machineForm.name, intervalDays: machineForm.interval, 
-        lastMaintenance: new Date().toISOString(), assignedTo: null 
-      }); 
-      alert("Activo creado en nube."); 
-    }
-    setMachineForm({ name: '', interval: 15 }); 
-  };
-
-  const handleEditMachine = (m: Machine) => {
-    setEditingMachineId(m.id);
-    setMachineForm({ name: m.name, interval: m.intervalDays });
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
-
-  const handleDeleteMachine = async (id: string) => {
-    if(!window.confirm("¿Eliminar este activo permanentemente?")) return;
-    try { await deleteDoc(doc(db, "machines", id)); } catch(e) { console.error(e); }
-  };
-
+  const deleteUser = async (userId: string) => { if(!window.confirm("¿Seguro que desea eliminar a este empleado?")) return; try { await deleteDoc(doc(db, "users", userId)); alert("Empleado eliminado."); } catch(e) { console.error(e); } };
+  const handleMachineSubmit = async (e: React.FormEvent) => { e.preventDefault(); if (editingMachineId) { await updateDoc(doc(db, "machines", editingMachineId), { name: machineForm.name, intervalDays: machineForm.interval }); alert("Activo actualizado correctamente."); setEditingMachineId(null); } else { await addDoc(collection(db, "machines"), { name: machineForm.name, intervalDays: machineForm.interval, lastMaintenance: new Date().toISOString(), assignedTo: null }); alert("Activo creado en nube."); } setMachineForm({ name: '', interval: 15 }); };
+  const handleEditMachine = (m: Machine) => { setEditingMachineId(m.id); setMachineForm({ name: m.name, interval: m.intervalDays }); window.scrollTo({ top: 0, behavior: 'smooth' }); };
+  const handleDeleteMachine = async (id: string) => { if(!window.confirm("¿Eliminar este activo permanentemente?")) return; try { await deleteDoc(doc(db, "machines", id)); } catch(e) { console.error(e); } };
   const updateMachineOwner = async (machineId: string, val: string) => { await updateDoc(doc(db, "machines", machineId), { assignedTo: val === "none" ? null : val }); };
   const updateUserRole = async (userId: string, newRole: Role) => { await updateDoc(doc(db, "users", userId), { role: newRole }); };
 
@@ -446,71 +505,19 @@ const ManagerView: React.FC<{ users: User[]; machines: Machine[]; records: Maint
       
       {activePanel === 'STATS' && (<div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
         
-        {/* CALENDARIO DE CUMPLIMIENTO */}
-        <Card>
-          <div className="flex justify-between items-center mb-6">
-            <h3 className="text-xl font-black uppercase flex items-center gap-3"><CalendarIcon className="text-orange-600" /> Calendario de Cumplimiento</h3>
-            <div className="flex gap-2">
-              <button onClick={() => setCurrentMonth(subMonths(currentMonth, 1))} className="p-2 hover:bg-slate-100 rounded-full"><ChevronLeft className="w-5 h-5"/></button>
-              <span className="font-black uppercase text-sm py-2 px-4 bg-slate-50 rounded-xl">{format(currentMonth, 'MMMM yyyy')}</span>
-              <button onClick={() => setCurrentMonth(addMonths(currentMonth, 1))} className="p-2 hover:bg-slate-100 rounded-full"><ChevronRight className="w-5 h-5"/></button>
-            </div>
-          </div>
-          
-          <div className="grid grid-cols-7 gap-2 mb-2">
-            {['Do','Lu','Ma','Mi','Ju','Vi','Sa'].map(d => <div key={d} className="text-center text-[10px] font-black text-slate-400 uppercase">{d}</div>)}
-          </div>
-          <div className="grid grid-cols-7 gap-2">
-            {calendarDays.map((day, idx) => {
-              const status = getDayStatus(day);
-              const isCurrentMonth = isSameMonth(day, currentMonth);
-              return (
-                <div 
-                  key={idx} 
-                  onClick={() => setSelectedDay(day)}
-                  className={`
-                    h-16 rounded-xl border-2 flex flex-col items-center justify-center cursor-pointer transition-all hover:scale-105
-                    ${!isCurrentMonth ? 'opacity-30' : ''}
-                    ${selectedDay && isSameDay(day, selectedDay) ? 'border-orange-500 shadow-md ring-2 ring-orange-200' : 'border-slate-50'}
-                    ${status === 'issue' ? 'bg-red-50 border-red-200' : status === 'ok' ? 'bg-emerald-50 border-emerald-200' : 'bg-white'}
-                  `}
-                >
-                  <span className="text-sm font-bold text-slate-700">{format(day, 'd')}</span>
-                  {status === 'issue' && <div className="w-2 h-2 rounded-full bg-red-500 mt-1"></div>}
-                  {status === 'ok' && <div className="w-2 h-2 rounded-full bg-emerald-500 mt-1"></div>}
-                </div>
-              );
-            })}
-          </div>
-
-          {/* DETALLES DEL DÍA SELECCIONADO */}
-          {selectedDay && (
-            <div className="mt-8 pt-8 border-t border-slate-100 animate-in fade-in slide-in-from-top-2">
-              <h4 className="font-black uppercase text-sm text-slate-500 mb-4">Detalle del {format(selectedDay, 'dd/MM/yyyy')}</h4>
-              {dayDetails.length > 0 ? (
-                <div className="space-y-3">
-                  {dayDetails.map(r => (
-                    <div key={r.id} className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100">
-                      <div>
-                        <p className="font-black text-slate-800 text-xs uppercase">{machines.find(m => m.id === r.machineId)?.name}</p>
-                        <p className="text-[10px] text-slate-400 font-bold">{users.find(u => u.id === r.userId)?.name}</p>
-                      </div>
-                      {r.isIssue ? <span className="bg-red-100 text-red-700 text-[9px] font-black px-2 py-1 rounded-md uppercase">Falla</span> : <span className="bg-emerald-100 text-emerald-700 text-[9px] font-black px-2 py-1 rounded-md uppercase">OK</span>}
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-center text-slate-400 text-xs italic">No hubo actividad registrada este día.</p>
-              )}
-            </div>
-          )}
-        </Card>
-
-        {/* RESTO DE LOS KPIS */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-          <Card><h3 className="text-xl font-black uppercase text-slate-700 border-b pb-6 mb-8 flex items-center gap-3"><BarChart3 className="text-orange-600" /> Plan vs. Incidencias</h3><div className="h-[300px] w-full"><ResponsiveContainer width="100%" height="100%"><BarChart data={maintenanceTypeStats}><CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" /><XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fontSize: 10, fontWeight: 'bold', fill: '#94a3b8'}} /><YAxis axisLine={false} tickLine={false} tick={{fontSize: 10, fontWeight: 'bold', fill: '#94a3b8'}} /><Tooltip cursor={{fill: '#f8fafc'}} contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'}} /><Bar dataKey="cantidad" fill="#f97316" radius={[10, 10, 0, 0]} barSize={60} /></BarChart></ResponsiveContainer></div></Card>
-          <Card><h3 className="text-xl font-black uppercase text-slate-700 border-b pb-6 mb-8 flex items-center gap-3"><Users className="text-orange-600" /> Productividad Mensual</h3><div className="space-y-4 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">{users.filter(u => u.role === Role.OPERATOR || u.role === Role.LEADER).map(u => { const count = records.filter(r => r.userId === u.id && isSameMonth(parseISO(r.date), startOfMonth(new Date()))).length; return (<div key={u.id} className="flex justify-between items-center p-4 bg-slate-50 rounded-2xl border border-slate-100 hover:border-orange-300 transition-colors"><div><span className="font-black text-slate-800 uppercase text-xs tracking-tight block">{u.name}</span><span className={`text-[9px] font-bold uppercase ${u.role === Role.LEADER ? 'text-amber-600' : 'text-slate-400'}`}>{u.role === Role.LEADER ? 'Resp. Mantenimiento' : 'Operario Línea'}</span></div><div className="flex items-center gap-3"><span className="bg-white shadow-sm px-3 py-1 rounded-lg text-[10px] font-black uppercase text-orange-600 border border-orange-100">{count} Tareas</span><MessageSquare className="w-5 h-5 text-emerald-500 cursor-pointer hover:scale-110 transition-transform" onClick={() => window.open(`https://wa.me/${u.phone}`)} /></div></div>); })}</div></Card>
+        {/* FILA 1: RANKING + PIE CHART */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+          <Card className="lg:col-span-2 bg-gradient-to-br from-slate-900 to-slate-800 text-white border-none shadow-slate-400/50 relative overflow-hidden"><div className="absolute top-0 right-0 p-8 opacity-10"><Trophy className="w-48 h-48" /></div><h3 className="text-xl font-black uppercase mb-8 flex items-center gap-3 relative z-10"><Trophy className="text-yellow-400" /> Top Performance</h3><div className="grid grid-cols-1 sm:grid-cols-3 gap-4 items-end relative z-10">{ranking.map((u, index) => { const styles = ["bg-yellow-400 text-yellow-900 border-yellow-300 h-48", "bg-slate-300 text-slate-900 border-slate-200 h-40", "bg-orange-400 text-orange-900 border-orange-300 h-32"]; return (<div key={u.id} className={`${styles[index]} p-5 rounded-3xl flex flex-col justify-between border-t-4 shadow-xl transform hover:-translate-y-2 transition-transform`}><div className="text-right font-black text-4xl opacity-50">#{index + 1}</div><div><p className="text-4xl font-black mb-1">{u.score}</p><p className="font-bold uppercase text-xs leading-tight truncate">{u.name}</p><p className="text-[9px] font-black uppercase tracking-widest opacity-60 mt-1">{u.role === Role.LEADER ? 'Líder' : 'Operario'}</p></div></div>); })}</div></Card>
+          <Card className="flex flex-col items-center justify-center"><h3 className="text-lg font-black uppercase text-slate-700 w-full text-center mb-4">Salud del Parque</h3><div className="h-[200px] w-full"><ResponsiveContainer><PieChart><Pie data={stats} cx="50%" cy="50%" innerRadius={60} outerRadius={80} paddingAngle={5} dataKey="value">{stats.map((e, i) => <Cell key={i} fill={e.color} strokeWidth={0} />)}</Pie><Tooltip contentStyle={{borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)'}} /><Legend verticalAlign="bottom" /></PieChart></ResponsiveContainer></div></Card>
         </div>
+
+        {/* FILA 2: CALENDARIO GLOBAL */}
+        <div className="h-96">
+          <MiniCalendar machines={machines} records={records} mode="MANAGER" />
+        </div>
+
+        {/* FILA 3: BARRAS + LISTA */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8"><Card><h3 className="text-xl font-black uppercase text-slate-700 border-b pb-6 mb-8 flex items-center gap-3"><BarChart3 className="text-orange-600" /> Plan vs. Incidencias</h3><div className="h-[300px] w-full"><ResponsiveContainer width="100%" height="100%"><BarChart data={maintenanceTypeStats}><CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" /><XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fontSize: 10, fontWeight: 'bold', fill: '#94a3b8'}} /><YAxis axisLine={false} tickLine={false} tick={{fontSize: 10, fontWeight: 'bold', fill: '#94a3b8'}} /><Tooltip cursor={{fill: '#f8fafc'}} contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'}} /><Bar dataKey="cantidad" fill="#f97316" radius={[10, 10, 0, 0]} barSize={60} /></BarChart></ResponsiveContainer></div></Card><Card><h3 className="text-xl font-black uppercase text-slate-700 border-b pb-6 mb-8 flex items-center gap-3"><Users className="text-orange-600" /> Productividad Mensual</h3><div className="space-y-4 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">{users.filter(u => u.role === Role.OPERATOR || u.role === Role.LEADER).map(u => { const count = records.filter(r => r.userId === u.id && isSameMonth(parseISO(r.date), startOfMonth(new Date()))).length; return (<div key={u.id} className="flex justify-between items-center p-4 bg-slate-50 rounded-2xl border border-slate-100 hover:border-orange-300 transition-colors"><div><span className="font-black text-slate-800 uppercase text-xs tracking-tight block">{u.name}</span><span className={`text-[9px] font-bold uppercase ${u.role === Role.LEADER ? 'text-amber-600' : 'text-slate-400'}`}>{u.role === Role.LEADER ? 'Resp. Mantenimiento' : 'Operario Línea'}</span></div><div className="flex items-center gap-3"><span className="bg-white shadow-sm px-3 py-1 rounded-lg text-[10px] font-black uppercase text-orange-600 border border-orange-100">{count} Tareas</span><MessageSquare className="w-5 h-5 text-emerald-500 cursor-pointer hover:scale-110 transition-transform" onClick={() => window.open(`https://wa.me/${u.phone}`)} /></div></div>); })}</div></Card></div>
       </div>)}
       
       {activePanel === 'HISTORY' && (<div className="space-y-8 animate-in fade-in zoom-in duration-300">
@@ -522,39 +529,13 @@ const ManagerView: React.FC<{ users: User[]; machines: Machine[]; records: Maint
             <div className="w-full md:w-1/4 space-y-2"><label className="text-[10px] font-black uppercase text-slate-400 flex gap-2"><Filter className="w-3 h-3"/> Tipo Registro</label><select className="w-full bg-slate-800 border border-slate-700 rounded-xl p-3 text-sm font-bold outline-none focus:border-orange-500 text-white cursor-pointer appearance-none" value={historyFilter.type} onChange={e => setHistoryFilter({...historyFilter, type: e.target.value})}><option value="ALL">Todo</option><option value="MANTO">Mantenimientos</option><option value="ISSUE">Fallas</option></select></div>
           </div>
         </Card>
-        
-        {/* BOTONES DE EXPORTACIÓN */}
-        <div className="flex gap-4 justify-end no-print">
-          <IndustrialButton onClick={exportToCSV} variant="success"><FileSpreadsheet className="w-4 h-4"/> Exportar Excel (CSV)</IndustrialButton>
-          <IndustrialButton onClick={handlePrint} variant="dark"><FileText className="w-4 h-4"/> Imprimir Reporte PDF</IndustrialButton>
-        </div>
-
-        {/* TABLA IMPRIMIBLE */}
+        <div className="flex gap-4 justify-end no-print"><IndustrialButton onClick={exportToCSV} variant="success"><FileSpreadsheet className="w-4 h-4"/> Exportar Excel (CSV)</IndustrialButton><IndustrialButton onClick={handlePrint} variant="dark"><FileText className="w-4 h-4"/> Imprimir Reporte PDF</IndustrialButton></div>
         <Card className="p-0 overflow-hidden border-orange-100 print:shadow-none print:border-none">
-          <div className="p-6 hidden print:block">
-            <h1 className="text-3xl font-black uppercase">Reporte de Auditoría TPM</h1>
-            <p className="text-sm text-slate-500">Generado el: {format(new Date(), 'dd/MM/yyyy HH:mm')}</p>
-          </div>
+          <div className="p-6 hidden print:block"><h1 className="text-3xl font-black uppercase">Reporte de Auditoría TPM</h1><p className="text-sm text-slate-500">Generado el: {format(new Date(), 'dd/MM/yyyy HH:mm')}</p></div>
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse">
-              <thead className="bg-orange-50 text-orange-900 text-[10px] font-black uppercase tracking-widest print:bg-slate-200 print:text-slate-900">
-                <tr><th className="p-6">Fecha</th><th className="p-6">Máquina</th><th className="p-6">Responsable</th><th className="p-6">Detalle</th><th className="p-6 text-center">Tipo</th></tr>
-              </thead>
-              <tbody className="text-xs font-medium text-slate-600">
-                {filteredRecords.length > 0 ? filteredRecords.map(r => { 
-                  const user = users.find(u => u.id === r.userId); 
-                  const machine = machines.find(m => m.id === r.machineId); 
-                  return (
-                    <tr key={r.id} className="border-b border-slate-100 hover:bg-slate-50 transition-colors group print:border-slate-300">
-                      <td className="p-6 font-bold whitespace-nowrap text-slate-400 group-hover:text-orange-600 transition-colors print:text-slate-900">{format(parseISO(r.date), 'dd/MM/yyyy HH:mm')}</td>
-                      <td className="p-6 uppercase font-black text-slate-800">{machine?.name || 'Máquina Eliminada'}</td>
-                      <td className="p-6"><div className="flex items-center gap-2"><span className="w-6 h-6 rounded-full bg-slate-200 flex items-center justify-center text-[10px] font-black text-slate-500 print:hidden">{user?.name.charAt(0)}</span><span className="font-bold">{user?.name}</span></div></td>
-                      <td className="p-6 italic max-w-xs truncate print:whitespace-normal print:overflow-visible" title={r.observations}>{r.observations || <span className="text-slate-300">-</span>}</td>
-                      <td className="p-6 text-center">{r.isIssue ? <span className="inline-flex items-center gap-1 bg-red-100 text-red-700 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-wider print:border print:border-red-500">Falla</span> : <span className="inline-flex items-center gap-1 bg-emerald-100 text-emerald-700 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-wider print:border print:border-emerald-500">OK</span>}</td>
-                    </tr>
-                  ); 
-                }) : <tr><td colSpan={5} className="p-12 text-center text-slate-400 font-bold uppercase text-sm">Sin registros</td></tr>}
-              </tbody>
+              <thead className="bg-orange-50 text-orange-900 text-[10px] font-black uppercase tracking-widest print:bg-slate-200 print:text-slate-900"><tr><th className="p-6">Fecha</th><th className="p-6">Máquina</th><th className="p-6">Responsable</th><th className="p-6">Detalle</th><th className="p-6 text-center">Tipo</th></tr></thead>
+              <tbody className="text-xs font-medium text-slate-600">{filteredRecords.length > 0 ? filteredRecords.map(r => { const user = users.find(u => u.id === r.userId); const machine = machines.find(m => m.id === r.machineId); return (<tr key={r.id} className="border-b border-slate-100 hover:bg-slate-50 transition-colors group print:border-slate-300"><td className="p-6 font-bold whitespace-nowrap text-slate-400 group-hover:text-orange-600 transition-colors print:text-slate-900">{format(parseISO(r.date), 'dd/MM/yyyy HH:mm')}</td><td className="p-6 uppercase font-black text-slate-800">{machine?.name || 'Máquina Eliminada'}</td><td className="p-6"><div className="flex items-center gap-2"><span className="w-6 h-6 rounded-full bg-slate-200 flex items-center justify-center text-[10px] font-black text-slate-500 print:hidden">{user?.name.charAt(0)}</span><span className="font-bold">{user?.name}</span></div></td><td className="p-6 italic max-w-xs truncate print:whitespace-normal print:overflow-visible" title={r.observations}>{r.observations || <span className="text-slate-300">-</span>}</td><td className="p-6 text-center">{r.isIssue ? <span className="inline-flex items-center gap-1 bg-red-100 text-red-700 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-wider print:border print:border-red-500">Falla</span> : <span className="inline-flex items-center gap-1 bg-emerald-100 text-emerald-700 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-wider print:border print:border-emerald-500">OK</span>}</td></tr>); }) : <tr><td colSpan={5} className="p-12 text-center text-slate-400 font-bold uppercase text-sm">Sin registros</td></tr>}</tbody>
             </table>
           </div>
         </Card>
