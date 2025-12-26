@@ -75,7 +75,7 @@ const PinModal: React.FC<{ isOpen: boolean; onClose: () => void; onConfirm: (pin
 
 const WhatsAppModal: React.FC<{ isOpen: boolean; onClose: () => void; onSend: (text: string) => void; userName: string }> = ({ isOpen, onClose, onSend, userName }) => {
   const [message, setMessage] = useState('');
-  useEffect(() => { if(isOpen) setMessage(`Hola ${userName}, consulta sobre MTO:...`); }, [isOpen, userName]);
+  useEffect(() => { if(isOpen) setMessage(`Hola ${userName}, consulta sobre mantenimiento pendiente:...`); }, [isOpen, userName]);
   if (!isOpen) return null;
   return (
     <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-sm z-[200] flex items-center justify-center p-4 animate-in fade-in duration-200">
