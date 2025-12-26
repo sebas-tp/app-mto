@@ -3,7 +3,7 @@ import {
   Users, Settings, BarChart3, CheckCircle2, AlertTriangle, Wrench, LogOut, 
   MessageSquare, ClipboardList, Database, Plus, UserPlus, History, HardDrive, 
   UserCog, LayoutDashboard, X, Calendar as CalendarIcon, Filter, Trophy, Search, Lock, Fingerprint, Loader2,
-  Trash2, Pencil, FileSpreadsheet, FileText, ChevronLeft, ChevronRight, Clock
+  Trash2, Pencil, FileSpreadsheet, FileText, ChevronLeft, ChevronRight, Clock, Send
 } from 'lucide-react';
 import { 
   PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend,
@@ -73,6 +73,39 @@ const PinModal: React.FC<{ isOpen: boolean; onClose: () => void; onConfirm: (pin
   );
 };
 
+// --- NUEVO: MODAL WHATSAPP ---
+const WhatsAppModal: React.FC<{ isOpen: boolean; onClose: () => void; onSend: (text: string) => void; userName: string }> = ({ isOpen, onClose, onSend, userName }) => {
+  const [message, setMessage] = useState('');
+  
+  // Reset message when opening for a new user
+  useEffect(() => {
+    if(isOpen) setMessage(`Hola ${userName}, te escribo desde el sistema de Mantenimiento para consultarte sobre...`);
+  }, [isOpen, userName]);
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-sm z-[200] flex items-center justify-center p-4 animate-in fade-in duration-200">
+      <Card className="w-full max-w-md">
+        <div className="flex justify-between items-center mb-6">
+          <h3 className="text-xl font-black uppercase flex items-center gap-2 text-emerald-600"><MessageSquare className="w-6 h-6" /> Mensaje Directo</h3>
+          <button onClick={onClose}><X className="w-5 h-5 text-slate-400 hover:text-red-500" /></button>
+        </div>
+        <p className="text-sm font-bold text-slate-500 mb-4 uppercase">Destinatario: <span className="text-slate-900">{userName}</span></p>
+        <textarea 
+          className="w-full p-4 bg-slate-50 border-2 border-slate-200 rounded-2xl mb-6 outline-none focus:border-emerald-500 font-medium h-32 resize-none"
+          value={message}
+          onChange={e => setMessage(e.target.value)}
+          autoFocus
+        />
+        <IndustrialButton fullWidth variant="success" onClick={() => onSend(message)}>
+          <Send className="w-4 h-4" /> Enviar WhatsApp
+        </IndustrialButton>
+      </Card>
+    </div>
+  );
+};
+
 // --- COMPONENTE DE CALENDARIO REUTILIZABLE ---
 const MiniCalendar: React.FC<{ 
   machines: Machine[], 
@@ -87,12 +120,8 @@ const MiniCalendar: React.FC<{
     return eachDayOfInterval({ start: startOfWeek(startOfMonth(currentMonth)), end: endOfWeek(endOfMonth(currentMonth)) });
   }, [currentMonth]);
 
-  // LOGICA DE PUNTOS DEL CALENDARIO
   const getDayStatus = (date: Date) => {
-    // 1. Historial (Lo que YA pasó)
     const dayRecords = records.filter(r => isSameDay(parseISO(r.date), date) && (mode === 'MANAGER' || r.userId === user?.id));
-    
-    // 2. Futuro (Lo que DEBE pasar - Solo para Operarios/Líderes)
     let hasFutureDue = false;
     if (mode === 'OPERATOR' && user) {
       const myMachines = machines.filter(m => m.assignedTo === user.id);
@@ -101,18 +130,14 @@ const MiniCalendar: React.FC<{
         return isSameDay(nextDate, date);
       });
     }
-
-    if (dayRecords.some(r => r.isIssue)) return 'issue'; // Rojo (Falla reportada)
-    if (dayRecords.length > 0) return 'done'; // Verde (Hecho)
-    if (hasFutureDue) return isPast(date) && !isSameDay(date, new Date()) ? 'missed' : 'planned'; // Naranja (Pendiente) o Rojo Oscuro (Perdido)
-    
+    if (dayRecords.some(r => r.isIssue)) return 'issue';
+    if (dayRecords.length > 0) return 'done';
+    if (hasFutureDue) return isPast(date) && !isSameDay(date, new Date()) ? 'missed' : 'planned';
     return 'none';
   };
 
   const getDetails = (date: Date) => {
-    // Registros hechos
     const done = records.filter(r => isSameDay(parseISO(r.date), date) && (mode === 'MANAGER' || r.userId === user?.id));
-    // Pendientes (Solo Operador)
     let pending: Machine[] = [];
     if (mode === 'OPERATOR' && user) {
       pending = machines.filter(m => m.assignedTo === user.id && isSameDay(addDays(parseISO(m.lastMaintenance), m.intervalDays), date));
@@ -130,7 +155,6 @@ const MiniCalendar: React.FC<{
           <button onClick={() => setCurrentMonth(addMonths(currentMonth, 1))} className="p-1 hover:bg-slate-100 rounded-lg"><ChevronRight className="w-4 h-4"/></button>
         </div>
       </div>
-      
       <div className="grid grid-cols-7 gap-1 mb-1">
         {['D','L','M','M','J','V','S'].map(d => <div key={d} className="text-center text-[9px] font-black text-slate-400">{d}</div>)}
       </div>
@@ -140,15 +164,7 @@ const MiniCalendar: React.FC<{
           const isCurrentMonth = isSameMonth(day, currentMonth);
           const isSelected = selectedDay && isSameDay(day, selectedDay);
           return (
-            <div 
-              key={idx} 
-              onClick={() => setSelectedDay(day)}
-              className={`
-                h-8 rounded-lg border flex flex-col items-center justify-center cursor-pointer transition-all hover:scale-105 relative
-                ${!isCurrentMonth ? 'opacity-20' : ''}
-                ${isSelected ? 'border-orange-500 bg-orange-50' : 'border-slate-50 bg-white'}
-              `}
-            >
+            <div key={idx} onClick={() => setSelectedDay(day)} className={`h-8 rounded-lg border flex flex-col items-center justify-center cursor-pointer transition-all hover:scale-105 relative ${!isCurrentMonth ? 'opacity-20' : ''} ${isSelected ? 'border-orange-500 bg-orange-50' : 'border-slate-50 bg-white'}`}>
               <span className="text-[10px] font-bold text-slate-700">{format(day, 'd')}</span>
               <div className="flex gap-0.5 mt-0.5">
                 {status === 'issue' && <div className="w-1.5 h-1.5 rounded-full bg-red-500"></div>}
@@ -160,8 +176,6 @@ const MiniCalendar: React.FC<{
           );
         })}
       </div>
-
-      {/* DETALLES COMPACTOS */}
       {selectedDay && (
         <div className="mt-4 pt-4 border-t border-slate-100 overflow-y-auto max-h-32">
           <p className="text-[9px] font-black uppercase text-slate-400 mb-2">{format(selectedDay, 'dd/MM/yyyy')}</p>
@@ -402,7 +416,6 @@ const OperatorView: React.FC<{ user: User; machines: Machine[]; records: Mainten
     <div className="space-y-12">
       <div className="flex flex-col md:flex-row justify-between items-end gap-8">
         <div><h2 className="text-5xl font-black text-slate-900 uppercase tracking-tighter leading-none">Mi Panel</h2><p className="text-slate-400 font-bold uppercase text-[10px] tracking-widest mt-3">Estado de Máquinas Bajo Control</p></div>
-        {/* CALENDARIO PEQUEÑO PARA OPERARIO */}
         <div className="w-full md:w-80 h-64"><MiniCalendar machines={machines} records={records} user={user} mode="OPERATOR" /></div>
       </div>
       {myMachines.length > 0 ? (
@@ -464,6 +477,10 @@ const ManagerView: React.FC<{ users: User[]; machines: Machine[]; records: Maint
   const [machineForm, setMachineForm] = useState({ name: '', interval: 15 });
   const [historyFilter, setHistoryFilter] = useState({ userId: 'ALL', dateFrom: '', dateTo: '', type: 'ALL' });
   const [editingMachineId, setEditingMachineId] = useState<string | null>(null);
+  
+  // STATES FOR WHATSAPP MODAL
+  const [showWAModal, setShowWAModal] = useState(false);
+  const [waTargetUser, setWaTargetUser] = useState<User | null>(null);
 
   const stats = useMemo(() => { const total = machines.length; const due = machines.filter(m => isPast(addDays(parseISO(m.lastMaintenance), m.intervalDays))).length; return [{ name: 'Operativo', value: total - due, color: '#10b981' }, { name: 'Vencido', value: due, color: '#ef4444' }]; }, [machines]);
   const maintenanceTypeStats = useMemo(() => { const preventive = records.filter(r => !r.isIssue).length; const corrective = records.filter(r => r.isIssue).length; return [{ name: 'Preventivo', cantidad: preventive }, { name: 'Correctivo', cantidad: corrective }]; }, [records]);
@@ -491,6 +508,19 @@ const ManagerView: React.FC<{ users: User[]; machines: Machine[]; records: Maint
 
   const handlePrint = () => { window.print(); };
 
+  // WHATSAPP LOGIC
+  const openWAModal = (u: User) => {
+    setWaTargetUser(u);
+    setShowWAModal(true);
+  };
+
+  const sendWhatsApp = (text: string) => {
+    if(!waTargetUser) return;
+    const url = `https://wa.me/${waTargetUser.phone}?text=${encodeURIComponent(text)}`;
+    window.open(url, '_blank');
+    setShowWAModal(false);
+  };
+
   const addUser = async (e: React.FormEvent) => { e.preventDefault(); await addDoc(collection(db, "users"), { ...userForm }); setUserForm({ name: '', phone: '', role: Role.OPERATOR, pin: '1234' }); alert("Usuario creado en nube."); };
   const deleteUser = async (userId: string) => { if(!window.confirm("¿Seguro que desea eliminar a este empleado?")) return; try { await deleteDoc(doc(db, "users", userId)); alert("Empleado eliminado."); } catch(e) { console.error(e); } };
   const handleMachineSubmit = async (e: React.FormEvent) => { e.preventDefault(); if (editingMachineId) { await updateDoc(doc(db, "machines", editingMachineId), { name: machineForm.name, intervalDays: machineForm.interval }); alert("Activo actualizado correctamente."); setEditingMachineId(null); } else { await addDoc(collection(db, "machines"), { name: machineForm.name, intervalDays: machineForm.interval, lastMaintenance: new Date().toISOString(), assignedTo: null }); alert("Activo creado en nube."); } setMachineForm({ name: '', interval: 15 }); };
@@ -501,6 +531,8 @@ const ManagerView: React.FC<{ users: User[]; machines: Machine[]; records: Maint
 
   return (
     <div className="space-y-12">
+      <WhatsAppModal isOpen={showWAModal} onClose={() => setShowWAModal(false)} onSend={sendWhatsApp} userName={waTargetUser?.name || ''} />
+
       <div className="flex flex-col xl:flex-row justify-between items-center gap-8 no-print"><div><h2 className="text-5xl font-black text-slate-900 uppercase tracking-tighter">Control <span className="text-orange-600">Maestro</span></h2><p className="text-slate-400 font-bold uppercase text-[10px] tracking-[0.3em] mt-3">Gerencia Técnica • Dashboard Intelligence</p></div><div className="flex bg-white p-2 rounded-[2rem] border border-slate-100 shadow-xl shadow-slate-200/50 overflow-x-auto max-w-full">{[{ id: 'STATS', label: 'KPIs Globales', icon: BarChart3 }, { id: 'HISTORY', label: 'Auditoría', icon: History }, { id: 'MACHINES', label: 'Activos', icon: HardDrive }, { id: 'USERS', label: 'Personal', icon: Users }].map(tab => (<button key={tab.id} onClick={() => setActivePanel(tab.id as any)} className={`px-6 py-3 rounded-2xl font-black text-[10px] uppercase transition-all tracking-widest flex items-center gap-2 whitespace-nowrap ${activePanel === tab.id ? 'bg-orange-600 text-white shadow-lg shadow-orange-200' : 'text-slate-400 hover:text-orange-500'}`}><tab.icon className="w-4 h-4" /> {tab.label}</button>))}</div></div>
       
       {activePanel === 'STATS' && (<div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
@@ -517,7 +549,7 @@ const ManagerView: React.FC<{ users: User[]; machines: Machine[]; records: Maint
         </div>
 
         {/* FILA 3: BARRAS + LISTA */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8"><Card><h3 className="text-xl font-black uppercase text-slate-700 border-b pb-6 mb-8 flex items-center gap-3"><BarChart3 className="text-orange-600" /> Plan vs. Incidencias</h3><div className="h-[300px] w-full"><ResponsiveContainer width="100%" height="100%"><BarChart data={maintenanceTypeStats}><CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" /><XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fontSize: 10, fontWeight: 'bold', fill: '#94a3b8'}} /><YAxis axisLine={false} tickLine={false} tick={{fontSize: 10, fontWeight: 'bold', fill: '#94a3b8'}} /><Tooltip cursor={{fill: '#f8fafc'}} contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'}} /><Bar dataKey="cantidad" fill="#f97316" radius={[10, 10, 0, 0]} barSize={60} /></BarChart></ResponsiveContainer></div></Card><Card><h3 className="text-xl font-black uppercase text-slate-700 border-b pb-6 mb-8 flex items-center gap-3"><Users className="text-orange-600" /> Productividad Mensual</h3><div className="space-y-4 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">{users.filter(u => u.role === Role.OPERATOR || u.role === Role.LEADER).map(u => { const count = records.filter(r => r.userId === u.id && isSameMonth(parseISO(r.date), startOfMonth(new Date()))).length; return (<div key={u.id} className="flex justify-between items-center p-4 bg-slate-50 rounded-2xl border border-slate-100 hover:border-orange-300 transition-colors"><div><span className="font-black text-slate-800 uppercase text-xs tracking-tight block">{u.name}</span><span className={`text-[9px] font-bold uppercase ${u.role === Role.LEADER ? 'text-amber-600' : 'text-slate-400'}`}>{u.role === Role.LEADER ? 'Resp. Mantenimiento' : 'Operario Línea'}</span></div><div className="flex items-center gap-3"><span className="bg-white shadow-sm px-3 py-1 rounded-lg text-[10px] font-black uppercase text-orange-600 border border-orange-100">{count} Tareas</span><MessageSquare className="w-5 h-5 text-emerald-500 cursor-pointer hover:scale-110 transition-transform" onClick={() => window.open(`https://wa.me/${u.phone}`)} /></div></div>); })}</div></Card></div>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8"><Card><h3 className="text-xl font-black uppercase text-slate-700 border-b pb-6 mb-8 flex items-center gap-3"><BarChart3 className="text-orange-600" /> Plan vs. Incidencias</h3><div className="h-[300px] w-full"><ResponsiveContainer width="100%" height="100%"><BarChart data={maintenanceTypeStats}><CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" /><XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fontSize: 10, fontWeight: 'bold', fill: '#94a3b8'}} /><YAxis axisLine={false} tickLine={false} tick={{fontSize: 10, fontWeight: 'bold', fill: '#94a3b8'}} /><Tooltip cursor={{fill: '#f8fafc'}} contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'}} /><Bar dataKey="cantidad" fill="#f97316" radius={[10, 10, 0, 0]} barSize={60} /></BarChart></ResponsiveContainer></div></Card><Card><h3 className="text-xl font-black uppercase text-slate-700 border-b pb-6 mb-8 flex items-center gap-3"><Users className="text-orange-600" /> Productividad Mensual</h3><div className="space-y-4 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">{users.filter(u => u.role === Role.OPERATOR || u.role === Role.LEADER).map(u => { const count = records.filter(r => r.userId === u.id && isSameMonth(parseISO(r.date), startOfMonth(new Date()))).length; return (<div key={u.id} className="flex justify-between items-center p-4 bg-slate-50 rounded-2xl border border-slate-100 hover:border-orange-300 transition-colors"><div><span className="font-black text-slate-800 uppercase text-xs tracking-tight block">{u.name}</span><span className={`text-[9px] font-bold uppercase ${u.role === Role.LEADER ? 'text-amber-600' : 'text-slate-400'}`}>{u.role === Role.LEADER ? 'Resp. Mantenimiento' : 'Operario Línea'}</span></div><div className="flex items-center gap-3"><span className="bg-white shadow-sm px-3 py-1 rounded-lg text-[10px] font-black uppercase text-orange-600 border border-orange-100">{count} Tareas</span><button onClick={() => openWAModal(u)}><MessageSquare className="w-5 h-5 text-emerald-500 cursor-pointer hover:scale-110 transition-transform" /></button></div></div>); })}</div></Card></div>
       </div>)}
       
       {activePanel === 'HISTORY' && (<div className="space-y-8 animate-in fade-in zoom-in duration-300">
