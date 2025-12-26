@@ -89,12 +89,12 @@ const WhatsAppModal: React.FC<{ isOpen: boolean; onClose: () => void; onSend: (t
   );
 };
 
-// --- MINI CALENDARIO MEJORADO (No tapa lista + Lógica Gerencia) ---
+// --- MINI CALENDARIO MEJORADO ---
 const MiniCalendar: React.FC<{ 
   machines: Machine[], 
   records: MaintenanceRecord[], 
-  users?: User[], // Necesitamos usuarios para mostrar nombres en Gerencia
-  user?: User, // Usuario actual (para operarios)
+  users?: User[], 
+  user?: User, 
   mode: 'MANAGER' | 'OPERATOR' 
 }> = ({ machines, records, users = [], user, mode }) => {
   const [currentMonth, setCurrentMonth] = useState(new Date());
@@ -104,67 +104,43 @@ const MiniCalendar: React.FC<{
     return eachDayOfInterval({ start: startOfWeek(startOfMonth(currentMonth)), end: endOfWeek(endOfMonth(currentMonth)) });
   }, [currentMonth]);
 
-  // --- LOGICA DE PUNTOS ---
   const getDayStatus = (date: Date) => {
-    // 1. REGISTROS (Lo que se hizo)
     const dayRecords = records.filter(r => isSameDay(parseISO(r.date), date) && (mode === 'MANAGER' || r.userId === user?.id));
-    if (dayRecords.some(r => r.isIssue)) return 'issue'; // Rojo (Falla reportada)
-    if (dayRecords.length > 0) return 'done'; // Verde (Hecho)
-
-    // 2. PENDIENTES (Lo que se debe/debía hacer)
-    // Buscamos si ALGUNA máquina tenía vencimiento este día
     const isPending = machines.some(m => {
-        // Calcular fechas de vencimiento para Operario y Lider
         const opNext = addDays(parseISO(m.lastOperatorDate), m.operatorInterval);
         const leadNext = addDays(parseISO(m.lastLeaderDate), m.leaderInterval);
-        
         const opMatch = isSameDay(opNext, date);
         const leadMatch = isSameDay(leadNext, date);
 
-        if (mode === 'MANAGER') {
-            // Gerente ve todo. Si tocaba hoy y no hay registro -> Pendiente
-            return opMatch || leadMatch;
-        } else if (user) {
-            // Operario solo ve lo suyo
+        if (mode === 'MANAGER') return opMatch || leadMatch;
+        else if (user) {
             if (user.role === Role.OPERATOR) return m.operatorId === user.id && opMatch;
             if (user.role === Role.LEADER) return m.leaderId === user.id && leadMatch;
         }
         return false;
     });
 
-    if (isPending) {
-        // Si la fecha ya pasó y no hay registro 'done' -> Missed (Rojo)
-        // Si es hoy o futuro -> Planned (Naranja)
-        return isPast(date) && !isToday(date) ? 'missed' : 'planned';
-    }
-    
+    if (dayRecords.some(r => r.isIssue)) return 'issue';
+    if (dayRecords.length > 0) return 'done';
+    if (isPending) return isPast(date) && !isToday(date) ? 'missed' : 'planned';
     return 'none';
   };
 
-  // --- LOGICA DE DETALLES AL CLICKEAR ---
   const getDetails = (date: Date) => {
-    // A. HECHOS
     const done = records.filter(r => isSameDay(parseISO(r.date), date) && (mode === 'MANAGER' || r.userId === user?.id));
-    
-    // B. PENDIENTES (Calculados al vuelo)
     let pending: { machineName: string, role: string, responsibleName: string }[] = [];
     
     machines.forEach(m => {
         const opNext = addDays(parseISO(m.lastOperatorDate), m.operatorInterval);
         const leadNext = addDays(parseISO(m.lastLeaderDate), m.leaderInterval);
         
-        // Chequeo Operario
         if (isSameDay(opNext, date)) {
             const resp = users.find(u => u.id === m.operatorId);
-            // Si soy Gerente veo todo. Si soy Operario solo veo lo mio.
             if (mode === 'MANAGER' || (user?.role === Role.OPERATOR && user.id === m.operatorId)) {
-                // Si NO hay registro de este tipo para esta máquina hoy, es pendiente
                 const exists = done.some(r => r.machineId === m.id && r.type === MaintenanceType.LIGHT);
                 if (!exists) pending.push({ machineName: m.name, role: 'Operario', responsibleName: resp?.name || 'Sin Asignar' });
             }
         }
-
-        // Chequeo Lider
         if (isSameDay(leadNext, date)) {
             const resp = users.find(u => u.id === m.leaderId);
             if (mode === 'MANAGER' || (user?.role === Role.LEADER && user.id === m.leaderId)) {
@@ -173,18 +149,15 @@ const MiniCalendar: React.FC<{
             }
         }
     });
-
     return { done, pending };
   };
 
   return (
-    <Card className="h-full flex flex-col min-h-[350px]"> {/* Altura mínima para evitar colapso */}
+    <Card className="h-full flex flex-col">
       <div className="flex justify-between items-center mb-4">
         <h3 className="text-sm font-black uppercase flex items-center gap-2"><CalendarIcon className="w-4 h-4 text-orange-600" /> {mode === 'MANAGER' ? 'Auditoría Global' : 'Mi Turno'}</h3>
         <div className="flex gap-1"><button onClick={() => setCurrentMonth(subMonths(currentMonth, 1))} className="p-1 hover:bg-slate-100 rounded-lg"><ChevronLeft className="w-4 h-4"/></button><span className="text-xs font-black uppercase py-1 px-2 bg-slate-50 rounded-lg min-w-[80px] text-center">{format(currentMonth, 'MMM')}</span><button onClick={() => setCurrentMonth(addMonths(currentMonth, 1))} className="p-1 hover:bg-slate-100 rounded-lg"><ChevronRight className="w-4 h-4"/></button></div>
       </div>
-      
-      {/* GRILLA DIAS */}
       <div className="grid grid-cols-7 gap-1 mb-1">{['D','L','M','M','J','V','S'].map(d => <div key={d} className="text-center text-[9px] font-black text-slate-400">{d}</div>)}</div>
       <div className="grid grid-cols-7 gap-1">
         {calendarDays.map((day, idx) => { 
@@ -198,20 +171,17 @@ const MiniCalendar: React.FC<{
                 {status === 'issue' && <div className="w-1.5 h-1.5 rounded-full bg-red-500"></div>}
                 {status === 'done' && <div className="w-1.5 h-1.5 rounded-full bg-emerald-500"></div>}
                 {status === 'planned' && <div className="w-1.5 h-1.5 rounded-full bg-orange-400"></div>}
-                {status === 'missed' && <div className="w-1.5 h-1.5 rounded-full bg-red-600 animate-pulse"></div>} {/* Rojo fuerte para vencidos */}
+                {status === 'missed' && <div className="w-1.5 h-1.5 rounded-full bg-red-600 animate-pulse"></div>}
               </div>
             </div>
           ); 
         })}
       </div>
 
-      {/* LISTA DETALLES (SCROLL INTERNO) */}
-      <div className="mt-4 pt-4 border-t border-slate-100 flex-1 overflow-y-auto max-h-48 custom-scrollbar"> {/* max-h define el scroll */}
+      <div className="mt-4 pt-4 border-t border-slate-100 overflow-y-auto max-h-60 custom-scrollbar">
         {selectedDay ? (
             <>
                 <p className="text-[10px] font-black uppercase text-slate-400 mb-2 sticky top-0 bg-white pb-1">{format(selectedDay, 'dd/MM/yyyy')}</p>
-                
-                {/* HECHOS */}
                 {getDetails(selectedDay).done.map(r => {
                     const executor = users.find(u => u.id === r.userId);
                     return (
@@ -224,8 +194,6 @@ const MiniCalendar: React.FC<{
                         </div>
                     );
                 })}
-
-                {/* PENDIENTES / VENCIDOS */}
                 {getDetails(selectedDay).pending.map((p, i) => {
                     const isVencido = isPast(selectedDay) && !isToday(selectedDay);
                     return (
@@ -240,7 +208,6 @@ const MiniCalendar: React.FC<{
                         </div>
                     );
                 })}
-
                 {getDetails(selectedDay).done.length === 0 && getDetails(selectedDay).pending.length === 0 && <p className="text-center text-[10px] text-slate-300 italic py-4">Sin actividad programada ni registrada.</p>}
             </>
         ) : (
@@ -265,40 +232,20 @@ export default function App() {
   const [isDataLoading, setIsDataLoading] = useState(true);
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
 
-  // --- PWA INSTALL PROMPT ---
   useEffect(() => {
-    window.addEventListener('beforeinstallprompt', (e) => {
-      e.preventDefault();
-      setDeferredPrompt(e);
-    });
+    window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); setDeferredPrompt(e); });
   }, []);
 
-  const handleInstallClick = () => {
-    if (deferredPrompt) {
-      deferredPrompt.prompt();
-      deferredPrompt.userChoice.then((choiceResult: any) => {
-        if (choiceResult.outcome === 'accepted') {
-          setDeferredPrompt(null);
-        }
-      });
-    }
-  };
+  const handleInstallClick = () => { if (deferredPrompt) { deferredPrompt.prompt(); deferredPrompt.userChoice.then((choiceResult: any) => { if (choiceResult.outcome === 'accepted') { setDeferredPrompt(null); } }); } };
 
-  // --- AUTO-LOGIN ---
   useEffect(() => {
     const conectarSistema = async () => {
       if (auth.currentUser) return;
-      try {
-        await signInWithEmailAndPassword(auth, "planta@sistema.com", "acceso_planta_2024");
-        console.log("🟢 Sistema conectado a la nube (Modo Portero).");
-      } catch (error) {
-        console.error("🔴 Error conectando al sistema:", error);
-      }
+      try { await signInWithEmailAndPassword(auth, "planta@sistema.com", "acceso_planta_2024"); } catch (error) { console.error("Error portero:", error); }
     };
     conectarSistema();
   }, []);
 
-  // --- DATA SYNC ---
   useEffect(() => {
     const unsubUsers = onSnapshot(collection(db, "users"), (snapshot) => {
       setUsers(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as User)));
@@ -333,7 +280,6 @@ export default function App() {
 
   const handleLogout = () => { setCurrentUser(null); localStorage.removeItem('local_session_user'); setView('LOGIN'); };
   
-  // SEED DB CON ESTRUCTURA DOBLE RELOJ
   const seedDB = async () => {
     const confirm = window.confirm("¿Seguro? Esto borrará/rescribirá los datos iniciales en la Nube.");
     if (!confirm) return;
@@ -341,13 +287,7 @@ export default function App() {
       await setDoc(doc(db, "users", "u1"), { name: 'Juan Operario', role: Role.OPERATOR, phone: '5491112345678', pin: '1234' });
       await setDoc(doc(db, "users", "u2"), { name: 'Pedro Líder', role: Role.LEADER, phone: '5491112345678', pin: '1234' });
       await setDoc(doc(db, "users", "u3"), { name: 'Ana Gerente', role: Role.MANAGER, phone: '5491112345678', pin: '9999' });
-      
-      // MAQUINA EJEMPLO CON DOBLE ASIGNACIÓN
-      await setDoc(doc(db, "machines", "m1"), { 
-        name: 'Inyectora Plástico I-01', 
-        operatorId: 'u1', operatorInterval: 15, lastOperatorDate: new Date().toISOString(),
-        leaderId: 'u2', leaderInterval: 30, lastLeaderDate: new Date().toISOString()
-      });
+      await setDoc(doc(db, "machines", "m1"), { name: 'Inyectora Plástico I-01', operatorId: 'u1', operatorInterval: 15, lastOperatorDate: new Date().toISOString(), leaderId: 'u2', leaderInterval: 30, lastLeaderDate: new Date().toISOString() });
       alert("Base de Datos Inicializada Correctamente.");
     } catch (error) {
       console.error(error);
@@ -391,7 +331,6 @@ export default function App() {
                     </select>
                   </div>
                 )}
-                {/* BOTÓN DE INSTALAR PWA */}
                 {deferredPrompt && (
                   <button onClick={handleInstallClick} className="w-full py-3 bg-slate-900 text-white rounded-2xl font-bold uppercase text-xs flex items-center justify-center gap-2 animate-bounce">
                     <Smartphone className="w-4 h-4" /> Instalar App en Celular
@@ -436,7 +375,6 @@ const OperatorView: React.FC<{ user: User; machines: Machine[]; records: Mainten
   const [isCritical, setIsCritical] = useState(false);
   const [showPinModal, setShowPinModal] = useState(false);
 
-  // FILTRO: Solo máquinas asignadas a MI (como operador)
   const myMachines = machines.filter(m => m.operatorId === user.id);
   const availableMachines = machines.filter(m => !m.operatorId);
 
@@ -447,9 +385,7 @@ const OperatorView: React.FC<{ user: User; machines: Machine[]; records: Mainten
     if (pin !== user.pin) return alert("ERROR DE FIRMA: PIN incorrecto."); 
     if (!selectedMachine) return; 
     try { 
-      // CREAR REGISTRO
       await addDoc(collection(db, "records"), { machineId: selectedMachine.id, userId: user.id, date: new Date().toISOString(), observations: obs, type: MaintenanceType.LIGHT, isIssue: isCritical }); 
-      // ACTUALIZAR FECHA OPERARIO
       await updateDoc(doc(db, "machines", selectedMachine.id), { lastOperatorDate: new Date().toISOString() }); 
       setSelectedMachine(null); setIsCritical(false); setObs(''); setChecklist(new Array(5).fill(false)); setShowPinModal(false); alert("Certificado digitalmente."); 
     } catch (e) { console.error(e); alert("Error de conexión."); } 
@@ -473,12 +409,10 @@ const OperatorView: React.FC<{ user: User; machines: Machine[]; records: Mainten
     <div className="space-y-12">
       <div className="flex flex-col md:flex-row justify-between items-end gap-8">
         <div><h2 className="text-4xl md:text-5xl font-black text-slate-900 uppercase tracking-tighter leading-none">Mi Panel</h2><p className="text-slate-400 font-bold uppercase text-[10px] tracking-widest mt-3">Estado de Máquinas Bajo Control</p></div>
-        {/* CALENDARIO SIN ALTURA FIJA PARA EVITAR OVERLAP */}
         <div className="w-full md:w-96"><MiniCalendar machines={machines} records={records} user={user} mode="OPERATOR" /></div>
       </div>
       {myMachines.length > 0 ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">{myMachines.map(m => { 
-          // CALCULO FECHA: Usa el reloj del OPERARIO
           const isDue = isPast(addDays(parseISO(m.lastOperatorDate), m.operatorInterval)); 
           return (<Card key={m.id} className={isDue ? 'border-red-500 shadow-red-100' : 'border-emerald-500 shadow-emerald-100'}><div className="flex justify-between mb-4"><div className={`p-3 rounded-2xl ${isDue ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-600'}`}><Wrench className="w-6 h-6" /></div>{isDue && <span className="text-[9px] font-black bg-red-600 text-white px-3 py-1 rounded-full animate-pulse uppercase tracking-widest">Atención Requerida</span>}</div><h3 className="text-2xl font-black text-slate-800 uppercase mb-4 leading-tight">{m.name}</h3><div className="space-y-2 mb-8"><p className="text-[10px] font-black text-slate-400 uppercase">Frecuencia: {m.operatorInterval} días</p><p className="text-[10px] font-black text-slate-400 uppercase">ID Equipo: {m.id}</p></div><IndustrialButton fullWidth variant={isDue ? 'primary' : 'outline'} onClick={() => { setSelectedMachine(m); setChecklist(new Array(5).fill(false)); }}>Realizar Manto.</IndustrialButton></Card>); 
         })}</div>
@@ -497,23 +431,10 @@ const LeaderView: React.FC<{ user: User; machines: Machine[]; records: Maintenan
   const [showPinModal, setShowPinModal] = useState(false);
 
   const issues = records.filter(r => r.isIssue);
-  
-  // FILTRO: Solo máquinas asignadas a MI como LIDER
   const myMachines = machines.filter(m => m.leaderId === user.id);
 
   const handleCloseIssue = async () => { if(!closingComment) return alert("Debe ingresar comentario."); if(!closingIssue) return; await updateDoc(doc(db, "records", closingIssue.id), { isIssue: false, observations: closingIssue.observations + ` | SOLUCIÓN LÍDER: ${closingComment}` }); setClosingIssue(null); setClosingComment(''); alert("Incidencia cerrada."); };
-  
-  const finalizeLeaderManto = async (pin: string) => { 
-    if (pin !== user.pin) return alert("ERROR: PIN inválido."); 
-    if (!selectedMachine) return; 
-    try { 
-        // CREAR REGISTRO
-        await addDoc(collection(db, "records"), { machineId: selectedMachine.id, userId: user.id, date: new Date().toISOString(), observations: `MANTENIMIENTO PROFUNDO: ${mantoObs}`, type: MaintenanceType.HEAVY, isIssue: false }); 
-        // ACTUALIZAR FECHA LIDER
-        await updateDoc(doc(db, "machines", selectedMachine.id), { lastLeaderDate: new Date().toISOString() }); 
-        setSelectedMachine(null); setChecklist(new Array(5).fill(false)); setMantoObs(''); setShowPinModal(false); alert("Certificado por Liderazgo."); 
-    } catch(e) { console.error(e); } 
-  };
+  const finalizeLeaderManto = async (pin: string) => { if (pin !== user.pin) return alert("ERROR: PIN inválido."); if (!selectedMachine) return; try { await addDoc(collection(db, "records"), { machineId: selectedMachine.id, userId: user.id, date: new Date().toISOString(), observations: `MANTENIMIENTO PROFUNDO: ${mantoObs}`, type: MaintenanceType.HEAVY, isIssue: false }); await updateDoc(doc(db, "machines", selectedMachine.id), { lastLeaderDate: new Date().toISOString() }); setSelectedMachine(null); setChecklist(new Array(5).fill(false)); setMantoObs(''); setShowPinModal(false); alert("Certificado por Liderazgo."); } catch(e) { console.error(e); } };
 
   if (selectedMachine) {
     return (
@@ -532,17 +453,14 @@ const LeaderView: React.FC<{ user: User; machines: Machine[]; records: Maintenan
     <div className="space-y-16 relative">
       {closingIssue && (<div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4"><Card className="w-full max-w-lg animate-in fade-in zoom-in duration-200"><div className="flex justify-between items-center mb-6"><h3 className="text-2xl font-black uppercase text-slate-800">Cierre Técnico</h3><button onClick={() => setClosingIssue(null)}><X className="w-6 h-6 text-slate-400 hover:text-red-500" /></button></div><p className="text-sm font-bold text-slate-500 uppercase mb-4">Resolución de falla en: <span className="text-slate-900">{machines.find(m => m.id === closingIssue.machineId)?.name}</span></p><div className="bg-red-50 p-4 rounded-xl border border-red-100 mb-6"><p className="text-[10px] text-red-400 font-black uppercase mb-1">Reporte Original:</p><p className="text-red-800 italic font-medium">"{closingIssue.observations}"</p></div><textarea autoFocus className="w-full p-4 bg-slate-50 border-2 border-slate-200 rounded-2xl mb-6 outline-none focus:border-orange-500 font-medium" placeholder="Solución aplicada..." rows={4} value={closingComment} onChange={e => setClosingComment(e.target.value)} /><IndustrialButton fullWidth onClick={handleCloseIssue}>Confirmar Solución</IndustrialButton></Card></div>)}
       
-      {/* HEADER DE LIDER CON CALENDARIO */}
       <div className="flex flex-col md:flex-row justify-between items-end gap-8">
         <div><h2 className="text-4xl md:text-5xl font-black text-slate-900 uppercase tracking-tighter leading-none">Resp. Mantenimiento <span className="text-orange-600">Gral.</span></h2><p className="text-slate-400 font-bold uppercase text-[10px] tracking-widest mt-3">Supervisión de Línea y Equipos Críticos</p></div>
-        {/* CALENDARIO SIN ALTURA FIJA */}
         <div className="w-full md:w-96"><MiniCalendar machines={machines} records={records} user={user} mode="OPERATOR" /></div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-12">
         <div className="space-y-8"><h3 className="text-2xl font-black text-red-600 uppercase flex items-center gap-3"><AlertTriangle className="animate-pulse" /> Alertas de Campo</h3>{issues.length === 0 ? (<div className="bg-white p-12 rounded-[2.5rem] border border-slate-100 text-center"><CheckCircle2 className="w-10 h-10 text-emerald-400 mx-auto mb-4" /><p className="text-slate-400 font-black uppercase text-xs">Sin incidencias</p></div>) : (issues.map(r => (<Card key={r.id} className="border-l-8 border-red-600 bg-red-50/20"><div className="flex justify-between items-start mb-4"><h4 className="text-xl font-black text-slate-800 uppercase tracking-tight">{machines.find(m => m.id === r.machineId)?.name}</h4><span className="text-[9px] font-black bg-red-600 text-white px-3 py-1 rounded-full uppercase">Falla Urgente</span></div><p className="text-slate-600 font-medium italic mb-6 leading-relaxed">"{r.observations}"</p><div className="flex justify-between items-center border-t border-red-100 pt-6"><p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Reporte por Operario</p><button className="text-[10px] font-black text-orange-600 hover:text-orange-700 uppercase tracking-tighter bg-white px-4 py-2 rounded-xl shadow-sm hover:shadow-md transition-all" onClick={() => setClosingIssue(r)}>Resolver Incidencia</button></div></Card>)))}</div>
         <div className="space-y-8"><h3 className="text-2xl font-black text-amber-700 uppercase flex items-center gap-3"><HardDrive /> Mis Equipos Asignados</h3>{myMachines.length === 0 ? (<div className="bg-white p-12 rounded-[2.5rem] border border-slate-100 text-center"><p className="text-slate-400 font-black uppercase text-xs">Sin tareas pesadas a cargo</p></div>) : (myMachines.map(m => { 
-          // CALCULO FECHA: Usa el reloj del LIDER
           const isDue = isPast(addDays(parseISO(m.lastLeaderDate), m.leaderInterval)); 
           return (<Card key={m.id} className={isDue ? 'border-red-500 shadow-red-50' : 'border-amber-600'}><div className="flex justify-between items-start mb-6"><h4 className="text-2xl font-black text-slate-800 uppercase tracking-tight leading-none">{m.name}</h4>{isDue && <span className="bg-red-600 text-white text-[9px] px-3 py-1 rounded-full animate-bounce uppercase font-black">Pendiente</span>}</div><div className="bg-slate-50 p-4 rounded-2xl mb-6"><p className="text-[10px] font-black text-slate-400 uppercase mb-1">Último Manto.</p><p className="font-bold text-slate-700">{format(parseISO(m.lastLeaderDate), 'dd MMMM, yyyy')}</p></div><IndustrialButton variant="secondary" fullWidth onClick={() => { setSelectedMachine(m); setChecklist(new Array(5).fill(false)); }}>Iniciar Protocolo Experto</IndustrialButton></Card>); 
         }))}</div>
@@ -557,21 +475,14 @@ const ManagerView: React.FC<{ users: User[]; machines: Machine[]; records: Maint
   const [historyFilter, setHistoryFilter] = useState({ userId: 'ALL', dateFrom: '', dateTo: '', type: 'ALL' });
   const [editingMachineId, setEditingMachineId] = useState<string | null>(null);
   
-  // ESTADO MAQUINA ACTUALIZADO PARA DOBLE RELOJ
   const [machineForm, setMachineForm] = useState({ 
-    name: '', 
-    operatorInterval: 15, 
-    leaderInterval: 30,
-    operatorId: '',
-    leaderId: '',
-    baseDate: new Date().toISOString().slice(0, 10) // Para input date
+    name: '', operatorInterval: 15, leaderInterval: 30, operatorId: '', leaderId: '', baseDate: new Date().toISOString().slice(0, 10)
   });
 
   const [showWAModal, setShowWAModal] = useState(false);
   const [waTargetUser, setWaTargetUser] = useState<User | null>(null);
 
   const stats = useMemo(() => { 
-      // KPI General: Si falla cualquiera de los dos relojes, cuenta como vencido
       const total = machines.length; 
       const due = machines.filter(m => {
           const opDue = isPast(addDays(parseISO(m.lastOperatorDate), m.operatorInterval));
@@ -649,7 +560,7 @@ const ManagerView: React.FC<{ users: User[]; machines: Machine[]; records: Maint
         </div>
 
         {/* FILA 2: CALENDARIO GLOBAL */}
-        <div className="h-96">
+        <div className="w-full">
           <MiniCalendar machines={machines} records={records} users={users} mode="MANAGER" />
         </div>
 
