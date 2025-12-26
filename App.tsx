@@ -75,7 +75,7 @@ const PinModal: React.FC<{ isOpen: boolean; onClose: () => void; onConfirm: (pin
 
 const WhatsAppModal: React.FC<{ isOpen: boolean; onClose: () => void; onSend: (text: string) => void; userName: string }> = ({ isOpen, onClose, onSend, userName }) => {
   const [message, setMessage] = useState('');
-  useEffect(() => { if(isOpen) setMessage(`Hola ${userName}, consulta sobre TPM:...`); }, [isOpen, userName]);
+  useEffect(() => { if(isOpen) setMessage(`Hola ${userName}, consulta sobre MTO:...`); }, [isOpen, userName]);
   if (!isOpen) return null;
   return (
     <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-sm z-[200] flex items-center justify-center p-4 animate-in fade-in duration-200">
@@ -222,8 +222,8 @@ export default function App() {
         <div className="w-full max-w-md space-y-8 relative z-10">
           <div className="text-center space-y-2">
             <div className="inline-block p-4 bg-orange-100 rounded-[2rem] text-orange-600 shadow-lg shadow-orange-100"><Settings className="w-12 h-12 animate-spin-slow" /></div>
-            <h1 className="text-5xl font-black uppercase tracking-tighter text-slate-900 leading-none">TPM <span className="text-orange-600 underline decoration-amber-500">PRO</span></h1>
-            <p className="text-slate-400 font-bold uppercase tracking-[0.2em] text-[10px]">Portal de Acceso Industrial</p>
+            <h1 className="text-5xl font-black uppercase tracking-tighter text-slate-900 leading-none">MTO <span className="text-orange-600 underline decoration-amber-500">PRO</span></h1>
+            <p className="text-slate-400 font-bold uppercase tracking-[0.2em] text-[10px]">Portal de Acceso Top Safe S.A.</p>
           </div>
           <div className="bg-white p-8 rounded-[2.5rem] shadow-2xl border border-slate-50 space-y-6 relative min-h-[300px] flex flex-col justify-center">
             {isDataLoading ? (
@@ -261,7 +261,7 @@ export default function App() {
       <header className="bg-white/80 backdrop-blur-md border-b border-slate-100 px-4 md:px-8 py-4 flex items-center justify-between sticky top-0 z-50">
         <div className="flex items-center gap-3">
           <div className="bg-orange-600 p-2 rounded-xl text-white shadow-lg shadow-orange-200"><Settings className="w-5 h-5 md:w-6 md:h-6" /></div>
-          <div><h1 className="text-xl md:text-2xl font-black uppercase tracking-tighter text-slate-900 leading-none">TPM <span className="text-orange-600">PRO</span></h1></div>
+          <div><h1 className="text-xl md:text-2xl font-black uppercase tracking-tighter text-slate-900 leading-none">MTO <span className="text-orange-600">PRO</span></h1></div>
         </div>
         <div className="flex items-center gap-4">
           <div className="text-right hidden sm:block"><p className="text-sm font-black text-slate-900 uppercase leading-none">{currentUser?.name}</p><span className="text-[9px] font-black bg-amber-100 text-amber-700 px-3 py-1 rounded-full uppercase mt-2 inline-block tracking-tighter">{getRoleDisplayName(currentUser?.role)}</span></div>
@@ -461,7 +461,7 @@ const ManagerView: React.FC<{ users: User[]; machines: Machine[]; records: Maint
         </Card>
         <div className="flex gap-4 justify-end no-print"><IndustrialButton onClick={exportToCSV} variant="success"><FileSpreadsheet className="w-4 h-4"/> Exportar Excel (CSV)</IndustrialButton><IndustrialButton onClick={handlePrint} variant="dark"><FileText className="w-4 h-4"/> Imprimir Reporte PDF</IndustrialButton></div>
         <Card className="p-0 overflow-hidden border-orange-100 print:shadow-none print:border-none">
-          <div className="p-6 hidden print:block"><h1 className="text-3xl font-black uppercase">Reporte de Auditoría TPM</h1><p className="text-sm text-slate-500">Generado el: {format(new Date(), 'dd/MM/yyyy HH:mm')}</p></div>
+          <div className="p-6 hidden print:block"><h1 className="text-3xl font-black uppercase">Reporte de Auditoría MTO</h1><p className="text-sm text-slate-500">Generado el: {format(new Date(), 'dd/MM/yyyy HH:mm')}</p></div>
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse">
               <thead className="bg-orange-50 text-orange-900 text-[10px] font-black uppercase tracking-widest print:bg-slate-200 print:text-slate-900"><tr><th className="p-6">Fecha</th><th className="p-6">Máquina</th><th className="p-6">Responsable</th><th className="p-6">Detalle</th><th className="p-6 text-center">Tipo</th></tr></thead>
