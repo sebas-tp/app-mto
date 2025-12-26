@@ -11,7 +11,7 @@ import {
 } from 'recharts';
 import { 
   format, addDays, isPast, parseISO, startOfMonth, isSameMonth, 
-  isWithinInterval, startOfDay, endOfDay, eachDayOfInterval, endOfMonth, startOfWeek, endOfWeek, isSameDay, addMonths, subMonths
+  isWithinInterval, startOfDay, endOfDay, eachDayOfInterval, endOfMonth, startOfWeek, endOfWeek, isSameDay, addMonths, subMonths, isFuture, isToday
 } from 'date-fns';
 
 // --- FIREBASE IMPORTS ---
@@ -89,56 +89,164 @@ const WhatsAppModal: React.FC<{ isOpen: boolean; onClose: () => void; onSend: (t
   );
 };
 
-// --- MINI CALENDARIO (Lógica Doble Reloj) ---
-const MiniCalendar: React.FC<{ machines: Machine[], records: MaintenanceRecord[], user?: User, mode: 'MANAGER' | 'OPERATOR' }> = ({ machines, records, user, mode }) => {
+// --- MINI CALENDARIO MEJORADO (No tapa lista + Lógica Gerencia) ---
+const MiniCalendar: React.FC<{ 
+  machines: Machine[], 
+  records: MaintenanceRecord[], 
+  users?: User[], // Necesitamos usuarios para mostrar nombres en Gerencia
+  user?: User, // Usuario actual (para operarios)
+  mode: 'MANAGER' | 'OPERATOR' 
+}> = ({ machines, records, users = [], user, mode }) => {
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [selectedDay, setSelectedDay] = useState<Date | null>(null);
-  const calendarDays = useMemo(() => eachDayOfInterval({ start: startOfWeek(startOfMonth(currentMonth)), end: endOfWeek(endOfMonth(currentMonth)) }), [currentMonth]);
-  
-  const getDayStatus = (date: Date) => {
-    // 1. Historial (Lo que YA se hizo)
-    const dayRecords = records.filter(r => isSameDay(parseISO(r.date), date) && (mode === 'MANAGER' || r.userId === user?.id));
-    
-    // 2. Futuro (Lo que TOCA hacer, calculado según quién mira)
-    let hasFutureDue = false;
-    if (mode === 'OPERATOR' && user) {
-        if (user.role === Role.OPERATOR) {
-            hasFutureDue = machines.some(m => m.operatorId === user.id && isSameDay(addDays(parseISO(m.lastOperatorDate), m.operatorInterval), date));
-        } else if (user.role === Role.LEADER) {
-            hasFutureDue = machines.some(m => m.leaderId === user.id && isSameDay(addDays(parseISO(m.lastLeaderDate), m.leaderInterval), date));
-        }
-    }
 
+  const calendarDays = useMemo(() => {
+    return eachDayOfInterval({ start: startOfWeek(startOfMonth(currentMonth)), end: endOfWeek(endOfMonth(currentMonth)) });
+  }, [currentMonth]);
+
+  // --- LOGICA DE PUNTOS ---
+  const getDayStatus = (date: Date) => {
+    // 1. REGISTROS (Lo que se hizo)
+    const dayRecords = records.filter(r => isSameDay(parseISO(r.date), date) && (mode === 'MANAGER' || r.userId === user?.id));
     if (dayRecords.some(r => r.isIssue)) return 'issue'; // Rojo (Falla reportada)
     if (dayRecords.length > 0) return 'done'; // Verde (Hecho)
-    if (hasFutureDue) return isPast(date) && !isSameDay(date, new Date()) ? 'missed' : 'planned'; // Naranja/RojoOscuro
+
+    // 2. PENDIENTES (Lo que se debe/debía hacer)
+    // Buscamos si ALGUNA máquina tenía vencimiento este día
+    const isPending = machines.some(m => {
+        // Calcular fechas de vencimiento para Operario y Lider
+        const opNext = addDays(parseISO(m.lastOperatorDate), m.operatorInterval);
+        const leadNext = addDays(parseISO(m.lastLeaderDate), m.leaderInterval);
+        
+        const opMatch = isSameDay(opNext, date);
+        const leadMatch = isSameDay(leadNext, date);
+
+        if (mode === 'MANAGER') {
+            // Gerente ve todo. Si tocaba hoy y no hay registro -> Pendiente
+            return opMatch || leadMatch;
+        } else if (user) {
+            // Operario solo ve lo suyo
+            if (user.role === Role.OPERATOR) return m.operatorId === user.id && opMatch;
+            if (user.role === Role.LEADER) return m.leaderId === user.id && leadMatch;
+        }
+        return false;
+    });
+
+    if (isPending) {
+        // Si la fecha ya pasó y no hay registro 'done' -> Missed (Rojo)
+        // Si es hoy o futuro -> Planned (Naranja)
+        return isPast(date) && !isToday(date) ? 'missed' : 'planned';
+    }
     
     return 'none';
   };
 
+  // --- LOGICA DE DETALLES AL CLICKEAR ---
   const getDetails = (date: Date) => {
+    // A. HECHOS
     const done = records.filter(r => isSameDay(parseISO(r.date), date) && (mode === 'MANAGER' || r.userId === user?.id));
-    let pending: Machine[] = [];
     
-    if (mode === 'OPERATOR' && user) {
-        if (user.role === Role.OPERATOR) {
-            pending = machines.filter(m => m.operatorId === user.id && isSameDay(addDays(parseISO(m.lastOperatorDate), m.operatorInterval), date));
-        } else if (user.role === Role.LEADER) {
-            pending = machines.filter(m => m.leaderId === user.id && isSameDay(addDays(parseISO(m.lastLeaderDate), m.leaderInterval), date));
+    // B. PENDIENTES (Calculados al vuelo)
+    let pending: { machineName: string, role: string, responsibleName: string }[] = [];
+    
+    machines.forEach(m => {
+        const opNext = addDays(parseISO(m.lastOperatorDate), m.operatorInterval);
+        const leadNext = addDays(parseISO(m.lastLeaderDate), m.leaderInterval);
+        
+        // Chequeo Operario
+        if (isSameDay(opNext, date)) {
+            const resp = users.find(u => u.id === m.operatorId);
+            // Si soy Gerente veo todo. Si soy Operario solo veo lo mio.
+            if (mode === 'MANAGER' || (user?.role === Role.OPERATOR && user.id === m.operatorId)) {
+                // Si NO hay registro de este tipo para esta máquina hoy, es pendiente
+                const exists = done.some(r => r.machineId === m.id && r.type === MaintenanceType.LIGHT);
+                if (!exists) pending.push({ machineName: m.name, role: 'Operario', responsibleName: resp?.name || 'Sin Asignar' });
+            }
         }
-    }
+
+        // Chequeo Lider
+        if (isSameDay(leadNext, date)) {
+            const resp = users.find(u => u.id === m.leaderId);
+            if (mode === 'MANAGER' || (user?.role === Role.LEADER && user.id === m.leaderId)) {
+                const exists = done.some(r => r.machineId === m.id && r.type === MaintenanceType.HEAVY);
+                if (!exists) pending.push({ machineName: m.name, role: 'Líder', responsibleName: resp?.name || 'Sin Asignar' });
+            }
+        }
+    });
+
     return { done, pending };
   };
 
   return (
-    <Card className="h-full flex flex-col">
+    <Card className="h-full flex flex-col min-h-[350px]"> {/* Altura mínima para evitar colapso */}
       <div className="flex justify-between items-center mb-4">
-        <h3 className="text-sm font-black uppercase flex items-center gap-2"><CalendarIcon className="w-4 h-4 text-orange-600" /> {mode === 'MANAGER' ? 'Auditoría' : 'Mi Turno'}</h3>
+        <h3 className="text-sm font-black uppercase flex items-center gap-2"><CalendarIcon className="w-4 h-4 text-orange-600" /> {mode === 'MANAGER' ? 'Auditoría Global' : 'Mi Turno'}</h3>
         <div className="flex gap-1"><button onClick={() => setCurrentMonth(subMonths(currentMonth, 1))} className="p-1 hover:bg-slate-100 rounded-lg"><ChevronLeft className="w-4 h-4"/></button><span className="text-xs font-black uppercase py-1 px-2 bg-slate-50 rounded-lg min-w-[80px] text-center">{format(currentMonth, 'MMM')}</span><button onClick={() => setCurrentMonth(addMonths(currentMonth, 1))} className="p-1 hover:bg-slate-100 rounded-lg"><ChevronRight className="w-4 h-4"/></button></div>
       </div>
+      
+      {/* GRILLA DIAS */}
       <div className="grid grid-cols-7 gap-1 mb-1">{['D','L','M','M','J','V','S'].map(d => <div key={d} className="text-center text-[9px] font-black text-slate-400">{d}</div>)}</div>
-      <div className="grid grid-cols-7 gap-1">{calendarDays.map((day, idx) => { const status = getDayStatus(day); const isCurrentMonth = isSameMonth(day, currentMonth); const isSelected = selectedDay && isSameDay(day, selectedDay); return (<div key={idx} onClick={() => setSelectedDay(day)} className={`h-8 rounded-lg border flex flex-col items-center justify-center cursor-pointer transition-all hover:scale-105 relative ${!isCurrentMonth ? 'opacity-20' : ''} ${isSelected ? 'border-orange-500 bg-orange-50' : 'border-slate-50 bg-white'}`}><span className="text-[10px] font-bold text-slate-700">{format(day, 'd')}</span><div className="flex gap-0.5 mt-0.5">{status === 'issue' && <div className="w-1.5 h-1.5 rounded-full bg-red-500"></div>}{status === 'done' && <div className="w-1.5 h-1.5 rounded-full bg-emerald-500"></div>}{status === 'planned' && <div className="w-1.5 h-1.5 rounded-full bg-orange-400"></div>}{status === 'missed' && <div className="w-1.5 h-1.5 rounded-full bg-red-800"></div>}</div></div>); })}</div>
-      {selectedDay && (<div className="mt-4 pt-4 border-t border-slate-100 overflow-y-auto max-h-32"><p className="text-[9px] font-black uppercase text-slate-400 mb-2">{format(selectedDay, 'dd/MM/yyyy')}</p>{getDetails(selectedDay).done.map(r => (<div key={r.id} className="flex justify-between items-center mb-2 text-xs"><span className="font-bold text-slate-700 truncate w-32">{machines.find(m => m.id === r.machineId)?.name}</span>{r.isIssue ? <span className="text-red-600 font-black">FALLA</span> : <span className="text-emerald-600 font-black">OK</span>}</div>))}{getDetails(selectedDay).pending.map(m => (<div key={m.id} className="flex justify-between items-center mb-2 text-xs"><span className="font-bold text-slate-700 truncate w-32">{m.name}</span><span className="text-orange-500 font-black flex items-center gap-1"><Clock className="w-3 h-3"/> TOCA HOY</span></div>))}{getDetails(selectedDay).done.length === 0 && getDetails(selectedDay).pending.length === 0 && <p className="text-center text-[10px] text-slate-300 italic">Sin eventos</p>}</div>)}
+      <div className="grid grid-cols-7 gap-1">
+        {calendarDays.map((day, idx) => { 
+          const status = getDayStatus(day); 
+          const isCurrentMonth = isSameMonth(day, currentMonth); 
+          const isSelected = selectedDay && isSameDay(day, selectedDay); 
+          return (
+            <div key={idx} onClick={() => setSelectedDay(day)} className={`h-8 md:h-10 rounded-lg border flex flex-col items-center justify-center cursor-pointer transition-all hover:scale-105 relative ${!isCurrentMonth ? 'opacity-20' : ''} ${isSelected ? 'border-orange-500 bg-orange-50' : 'border-slate-50 bg-white'}`}>
+              <span className="text-[10px] font-bold text-slate-700">{format(day, 'd')}</span>
+              <div className="flex gap-0.5 mt-0.5">
+                {status === 'issue' && <div className="w-1.5 h-1.5 rounded-full bg-red-500"></div>}
+                {status === 'done' && <div className="w-1.5 h-1.5 rounded-full bg-emerald-500"></div>}
+                {status === 'planned' && <div className="w-1.5 h-1.5 rounded-full bg-orange-400"></div>}
+                {status === 'missed' && <div className="w-1.5 h-1.5 rounded-full bg-red-600 animate-pulse"></div>} {/* Rojo fuerte para vencidos */}
+              </div>
+            </div>
+          ); 
+        })}
+      </div>
+
+      {/* LISTA DETALLES (SCROLL INTERNO) */}
+      <div className="mt-4 pt-4 border-t border-slate-100 flex-1 overflow-y-auto max-h-48 custom-scrollbar"> {/* max-h define el scroll */}
+        {selectedDay ? (
+            <>
+                <p className="text-[10px] font-black uppercase text-slate-400 mb-2 sticky top-0 bg-white pb-1">{format(selectedDay, 'dd/MM/yyyy')}</p>
+                
+                {/* HECHOS */}
+                {getDetails(selectedDay).done.map(r => {
+                    const executor = users.find(u => u.id === r.userId);
+                    return (
+                        <div key={r.id} className="flex justify-between items-center mb-2 p-2 bg-slate-50 rounded-lg border border-slate-100">
+                            <div className="flex flex-col">
+                                <span className="font-bold text-slate-700 text-xs">{machines.find(m => m.id === r.machineId)?.name}</span>
+                                <span className="text-[9px] text-slate-400 uppercase font-bold">Realizado por: {executor?.name || 'Desconocido'}</span>
+                            </div>
+                            {r.isIssue ? <span className="text-red-600 font-black text-[9px] border border-red-200 bg-red-50 px-2 py-1 rounded">FALLA</span> : <span className="text-emerald-600 font-black text-[9px] border border-emerald-200 bg-emerald-50 px-2 py-1 rounded">OK</span>}
+                        </div>
+                    );
+                })}
+
+                {/* PENDIENTES / VENCIDOS */}
+                {getDetails(selectedDay).pending.map((p, i) => {
+                    const isVencido = isPast(selectedDay) && !isToday(selectedDay);
+                    return (
+                        <div key={i} className={`flex justify-between items-center mb-2 p-2 rounded-lg border ${isVencido ? 'bg-red-50 border-red-100' : 'bg-orange-50 border-orange-100'}`}>
+                            <div className="flex flex-col">
+                                <span className={`font-bold text-xs ${isVencido ? 'text-red-800' : 'text-orange-800'}`}>{p.machineName}</span>
+                                <span className={`text-[9px] uppercase font-bold ${isVencido ? 'text-red-400' : 'text-orange-400'}`}>Resp: {p.responsibleName} ({p.role})</span>
+                            </div>
+                            <span className={`font-black text-[9px] px-2 py-1 rounded border uppercase ${isVencido ? 'text-red-600 border-red-200 bg-white' : 'text-orange-600 border-orange-200 bg-white'}`}>
+                                {isVencido ? 'Vencido' : 'Pendiente'}
+                            </span>
+                        </div>
+                    );
+                })}
+
+                {getDetails(selectedDay).done.length === 0 && getDetails(selectedDay).pending.length === 0 && <p className="text-center text-[10px] text-slate-300 italic py-4">Sin actividad programada ni registrada.</p>}
+            </>
+        ) : (
+            <p className="text-center text-[10px] text-slate-400 italic py-8">Selecciona un día para ver detalles.</p>
+        )}
+      </div>
     </Card>
   );
 };
@@ -182,7 +290,10 @@ export default function App() {
       if (auth.currentUser) return;
       try {
         await signInWithEmailAndPassword(auth, "planta@sistema.com", "acceso_planta_2024");
-      } catch (error) { console.error("Error portero:", error); }
+        console.log("🟢 Sistema conectado a la nube (Modo Portero).");
+      } catch (error) {
+        console.error("🔴 Error conectando al sistema:", error);
+      }
     };
     conectarSistema();
   }, []);
@@ -362,7 +473,8 @@ const OperatorView: React.FC<{ user: User; machines: Machine[]; records: Mainten
     <div className="space-y-12">
       <div className="flex flex-col md:flex-row justify-between items-end gap-8">
         <div><h2 className="text-4xl md:text-5xl font-black text-slate-900 uppercase tracking-tighter leading-none">Mi Panel</h2><p className="text-slate-400 font-bold uppercase text-[10px] tracking-widest mt-3">Estado de Máquinas Bajo Control</p></div>
-        <div className="w-full md:w-80 h-64"><MiniCalendar machines={machines} records={records} user={user} mode="OPERATOR" /></div>
+        {/* CALENDARIO SIN ALTURA FIJA PARA EVITAR OVERLAP */}
+        <div className="w-full md:w-96"><MiniCalendar machines={machines} records={records} user={user} mode="OPERATOR" /></div>
       </div>
       {myMachines.length > 0 ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">{myMachines.map(m => { 
@@ -423,7 +535,8 @@ const LeaderView: React.FC<{ user: User; machines: Machine[]; records: Maintenan
       {/* HEADER DE LIDER CON CALENDARIO */}
       <div className="flex flex-col md:flex-row justify-between items-end gap-8">
         <div><h2 className="text-4xl md:text-5xl font-black text-slate-900 uppercase tracking-tighter leading-none">Resp. Mantenimiento <span className="text-orange-600">Gral.</span></h2><p className="text-slate-400 font-bold uppercase text-[10px] tracking-widest mt-3">Supervisión de Línea y Equipos Críticos</p></div>
-        <div className="w-full md:w-80 h-64"><MiniCalendar machines={machines} records={records} user={user} mode="OPERATOR" /></div>
+        {/* CALENDARIO SIN ALTURA FIJA */}
+        <div className="w-full md:w-96"><MiniCalendar machines={machines} records={records} user={user} mode="OPERATOR" /></div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-12">
@@ -498,53 +611,25 @@ const ManagerView: React.FC<{ users: User[]; machines: Machine[]; records: Maint
   const addUser = async (e: React.FormEvent) => { e.preventDefault(); await addDoc(collection(db, "users"), { ...userForm }); setUserForm({ name: '', phone: '', role: Role.OPERATOR, pin: '1234' }); alert("Usuario creado en nube."); };
   const deleteUser = async (userId: string) => { if(!window.confirm("¿Seguro que desea eliminar a este empleado?")) return; try { await deleteDoc(doc(db, "users", userId)); alert("Empleado eliminado."); } catch(e) { console.error(e); } };
   
-  // --- NUEVA LÓGICA DE ALTA DE MÁQUINA ---
   const handleMachineSubmit = async (e: React.FormEvent) => { 
     e.preventDefault(); 
-    
-    const baseDate = new Date(machineForm.baseDate).toISOString(); // Convierte la fecha del input a ISO
-
+    const baseDate = new Date(machineForm.baseDate).toISOString(); 
     if (editingMachineId) {
       await updateDoc(doc(db, "machines", editingMachineId), { 
-        name: machineForm.name, 
-        operatorInterval: machineForm.operatorInterval,
-        leaderInterval: machineForm.leaderInterval,
-        operatorId: machineForm.operatorId || null,
-        leaderId: machineForm.leaderId || null
-        // No actualizamos las fechas base al editar para no reiniciar ciclos, salvo que se quiera explícitamente (complejidad extra)
+        name: machineForm.name, operatorInterval: machineForm.operatorInterval, leaderInterval: machineForm.leaderInterval, operatorId: machineForm.operatorId || null, leaderId: machineForm.leaderId || null
       });
-      alert("Activo actualizado correctamente.");
-      setEditingMachineId(null);
+      alert("Activo actualizado correctamente."); setEditingMachineId(null);
     } else {
       await addDoc(collection(db, "machines"), { 
-        name: machineForm.name, 
-        
-        operatorInterval: machineForm.operatorInterval,
-        operatorId: machineForm.operatorId || null,
-        lastOperatorDate: baseDate, // <--- USA LA FECHA DEL PICKER
-
-        leaderInterval: machineForm.leaderInterval,
-        leaderId: machineForm.leaderId || null,
-        lastLeaderDate: baseDate    // <--- USA LA FECHA DEL PICKER
+        name: machineForm.name, operatorInterval: machineForm.operatorInterval, operatorId: machineForm.operatorId || null, lastOperatorDate: baseDate,
+        leaderInterval: machineForm.leaderInterval, leaderId: machineForm.leaderId || null, lastLeaderDate: baseDate 
       }); 
       alert("Activo creado en nube."); 
     }
     setMachineForm({ name: '', operatorInterval: 15, leaderInterval: 30, operatorId: '', leaderId: '', baseDate: new Date().toISOString().slice(0, 10) }); 
   };
 
-  const handleEditMachine = (m: Machine) => { 
-      setEditingMachineId(m.id); 
-      setMachineForm({ 
-          name: m.name, 
-          operatorInterval: m.operatorInterval, 
-          leaderInterval: m.leaderInterval,
-          operatorId: m.operatorId || '',
-          leaderId: m.leaderId || '',
-          baseDate: m.lastOperatorDate.slice(0, 10) 
-      }); 
-      window.scrollTo({ top: 0, behavior: 'smooth' }); 
-  };
-  
+  const handleEditMachine = (m: Machine) => { setEditingMachineId(m.id); setMachineForm({ name: m.name, operatorInterval: m.operatorInterval, leaderInterval: m.leaderInterval, operatorId: m.operatorId || '', leaderId: m.leaderId || '', baseDate: m.lastOperatorDate.slice(0, 10) }); window.scrollTo({ top: 0, behavior: 'smooth' }); };
   const handleDeleteMachine = async (id: string) => { if(!window.confirm("¿Eliminar este activo permanentemente?")) return; try { await deleteDoc(doc(db, "machines", id)); } catch(e) { console.error(e); } };
   const updateMachineOwner = async (machineId: string, val: string) => { await updateDoc(doc(db, "machines", machineId), { assignedTo: val === "none" ? null : val }); };
   const updateUserRole = async (userId: string, newRole: Role) => { await updateDoc(doc(db, "users", userId), { role: newRole }); };
@@ -565,7 +650,7 @@ const ManagerView: React.FC<{ users: User[]; machines: Machine[]; records: Maint
 
         {/* FILA 2: CALENDARIO GLOBAL */}
         <div className="h-96">
-          <MiniCalendar machines={machines} records={records} mode="MANAGER" />
+          <MiniCalendar machines={machines} records={records} users={users} mode="MANAGER" />
         </div>
 
         {/* FILA 3: BARRAS + LISTA */}
