@@ -4,15 +4,15 @@ import {
   MessageSquare, ClipboardList, Database, Plus, UserPlus, History, HardDrive, 
   UserCog, LayoutDashboard, X, Calendar as CalendarIcon, Filter, Trophy, Search, Lock, Fingerprint, Loader2,
   Trash2, Pencil, FileSpreadsheet, FileText, ChevronLeft, ChevronRight, Clock, Send, Download, Smartphone,
-  ListChecks, Ban, Activity, Timer, TrendingUp
+  ListChecks, Ban, Activity, Timer, TrendingUp, Gauge, CheckSquare
 } from 'lucide-react';
 import { 
   PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend,
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, LineChart, Line, AreaChart, Area
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, AreaChart, Area
 } from 'recharts';
 import { 
   format, addDays, isPast, parseISO, startOfMonth, isSameMonth, 
-  isWithinInterval, startOfDay, endOfDay, eachDayOfInterval, endOfMonth, startOfWeek, endOfWeek, isSameDay, addMonths, subMonths, isFuture, isToday
+  isWithinInterval, startOfDay, endOfDay, eachDayOfInterval, endOfMonth, startOfWeek, endOfWeek, isSameDay, addMonths, subMonths, isFuture, isToday, differenceInDays
 } from 'date-fns';
 
 // --- FIREBASE IMPORTS ---
@@ -191,7 +191,7 @@ const MiniCalendar: React.FC<{ machines: Machine[], records: MaintenanceRecord[]
                 ))}
                 {getDetails(selectedDay).done.length === 0 && getDetails(selectedDay).pending.length === 0 && <p className="text-center text-[10px] text-slate-300 italic py-4">Sin actividad.</p>}
             </>
-        ) : <p className="text-center text-[10px] text-slate-400 italic py-8">Selecciona un día para ver detalle.</p>}
+        ) : <p className="text-center text-[10px] text-slate-400 italic py-8">Selecciona un día.</p>}
       </div>
     </Card>
   );
@@ -241,9 +241,8 @@ export default function App() {
   };
   const handleLogout = () => { setCurrentUser(null); localStorage.removeItem('local_session_user'); setView('LOGIN'); };
   
-  // FUNCION SEED ELIMINADA POR SEGURIDAD PARA NO PISAR DATOS REALES
-  // Si necesitas restaurar, usa la version anterior con cuidado.
-  const seedDB = async () => { alert("Función desactivada para proteger datos reales."); };
+  // FUNCION SEED ELIMINADA POR SEGURIDAD
+  const seedDB = async () => { alert("Función desactivada."); };
 
   const getRoleDisplayName = (role?: Role) => { if (role === Role.LEADER) return "RESP. MANTENIMIENTO"; if (role === Role.MANAGER) return "GERENCIA"; return "OPERARIO"; };
 
@@ -456,60 +455,56 @@ const ManagerView: React.FC<{ users: User[]; machines: Machine[]; records: Maint
   const [historyFilter, setHistoryFilter] = useState({ userId: 'ALL', dateFrom: '', dateTo: '', type: 'ALL' });
   const [editingMachineId, setEditingMachineId] = useState<string | null>(null);
   const [machineForm, setMachineForm] = useState({ name: '', operatorInterval: 15, leaderInterval: 30, operatorId: '', leaderId: '', baseDate: new Date().toISOString().slice(0, 10) });
-  const [selectedMachineId, setSelectedMachineId] = useState<string | null>(null);
-  const [chartMetric, setChartMetric] = useState<'DOWNTIME' | 'TASKS'>('DOWNTIME');
   
+  // SELECTOR GLOBAL DE MAQUINA PARA STATS
+  const [selectedMachineId, setSelectedMachineId] = useState<string>('ALL');
+
   const [newItemText, setNewItemText] = useState('');
   const [newItemRole, setNewItemRole] = useState<Role>(Role.OPERATOR);
   const [showWAModal, setShowWAModal] = useState(false);
   const [waTargetUser, setWaTargetUser] = useState<User | null>(null);
 
-  // --- LOGICA DASHBOARD NUEVA ---
+  // FILTRADO DE MAQUINAS Y REGISTROS SEGUN SELECTOR
+  const filteredMachines = useMemo(() => selectedMachineId === 'ALL' ? machines : machines.filter(m => m.id === selectedMachineId), [machines, selectedMachineId]);
+  const filteredRecordsForStats = useMemo(() => selectedMachineId === 'ALL' ? records : records.filter(r => r.machineId === selectedMachineId), [records, selectedMachineId]);
+
+  // KPI CALCULATIONS (DINÁMICOS)
   const kpiData = useMemo(() => {
-    const totalAssets = machines.length;
-    const totalTasks = records.length;
-    const totalDowntime = records.reduce((acc, r) => acc + (r.downtime || 0), 0);
+    const totalAssets = filteredMachines.length;
+    const totalTasks = filteredRecordsForStats.length;
+    const totalDowntime = filteredRecordsForStats.reduce((acc, r) => acc + (r.downtime || 0), 0);
     
-    // Compliance Estimate: Active Machines with No Pending Tasks Today
-    const compliantMachines = machines.filter(m => {
-        const opDue = isPast(addDays(parseISO(m.lastOperatorDate), m.operatorInterval));
-        const ldDue = isPast(addDays(parseISO(m.lastLeaderDate), m.leaderInterval));
+    // Efficiency: (Tiempo Total Disponible - Tiempo de Parada) / Tiempo Total Disponible
+    // Asumimos 24/7 de disponibilidad teórica (o un turno estándar) para el cálculo.
+    // Ejemplo: Si hay 10 máquinas, en 30 días son 10 * 30 * 24 * 60 minutos disponibles.
+    const minutesInMonth = 30 * 24 * 60;
+    const totalAvailableTime = totalAssets * minutesInMonth; 
+    const efficiency = totalAvailableTime > 0 ? Math.max(0, Math.round(((totalAvailableTime - totalDowntime) / totalAvailableTime) * 100)) : 100;
+
+    // Compliance (Adherencia): % de Máquinas que NO tienen tareas vencidas HOY
+    const compliantMachines = filteredMachines.filter(m => {
+        const opDue = isPast(addDays(parseISO(m.lastOperatorDate), m.operatorInterval)) && !isToday(addDays(parseISO(m.lastOperatorDate), m.operatorInterval));
+        const ldDue = isPast(addDays(parseISO(m.lastLeaderDate), m.leaderInterval)) && !isToday(addDays(parseISO(m.lastLeaderDate), m.leaderInterval));
         return !opDue && !ldDue;
     }).length;
     const complianceRate = totalAssets > 0 ? Math.round((compliantMachines / totalAssets) * 100) : 100;
 
-    return { totalAssets, totalTasks, totalDowntime, complianceRate };
-  }, [machines, records]);
+    return { totalAssets, totalTasks, totalDowntime, complianceRate, efficiency };
+  }, [filteredMachines, filteredRecordsForStats]);
 
-  // TOP DOWNTIME MACHINES
-  const downtimeData = useMemo(() => {
-    const map = new Map<string, number>();
-    records.forEach(r => {
-        const current = map.get(r.machineId) || 0;
-        map.set(r.machineId, current + (r.downtime || 0));
-    });
-    return Array.from(map.entries())
-        .map(([id, val]) => ({ name: machines.find(m => m.id === id)?.name || 'Unknown', value: val }))
-        .sort((a, b) => b.value - a.value)
-        .slice(0, 5); // Top 5
-  }, [records, machines]);
-
-  // SELECTED MACHINE DATA
-  const selectedMachineStats = useMemo(() => {
-    if (!selectedMachineId) return null;
-    const m = machines.find(m => m.id === selectedMachineId);
-    if (!m) return null;
-    const mRecords = records.filter(r => r.machineId === selectedMachineId);
-    const totalDown = mRecords.reduce((acc, r) => acc + (r.downtime || 0), 0);
-    const lastOp = format(parseISO(m.lastOperatorDate), 'dd/MM/yyyy');
-    const lastLd = format(parseISO(m.lastLeaderDate), 'dd/MM/yyyy');
-    return { ...m, totalDown, lastOp, lastLd, recordCount: mRecords.length };
-  }, [selectedMachineId, machines, records]);
+  const stats = useMemo(() => { 
+      const total = filteredMachines.length; 
+      const due = filteredMachines.filter(m => {
+          const opDue = isPast(addDays(parseISO(m.lastOperatorDate), m.operatorInterval)) && !isToday(addDays(parseISO(m.lastOperatorDate), m.operatorInterval));
+          const leadDue = isPast(addDays(parseISO(m.lastLeaderDate), m.leaderInterval)) && !isToday(addDays(parseISO(m.lastLeaderDate), m.leaderInterval));
+          return opDue || leadDue;
+      }).length; 
+      return [{ name: 'Operativo', value: total - due, color: '#10b981' }, { name: 'Vencido', value: due, color: '#ef4444' }]; 
+  }, [filteredMachines]);
 
   // TREND CHART DATA
   const trendData = useMemo(() => {
-    const data: any[] = [];
-    const grouped = records.reduce((acc: any, r) => {
+    const grouped = filteredRecordsForStats.reduce((acc: any, r) => {
         const date = r.date.slice(0, 10);
         if (!acc[date]) acc[date] = { date, downtime: 0, tasks: 0 };
         acc[date].downtime += (r.downtime || 0);
@@ -517,13 +512,11 @@ const ManagerView: React.FC<{ users: User[]; machines: Machine[]; records: Maint
         return acc;
     }, {});
     return Object.values(grouped).sort((a: any, b: any) => new Date(a.date).getTime() - new Date(b.date).getTime());
-  }, [records]);
+  }, [filteredRecordsForStats]);
 
-  const maintenanceTypeStats = useMemo(() => { const preventive = records.filter(r => !r.isIssue).length; const corrective = records.filter(r => r.isIssue).length; return [{ name: 'Preventivo', cantidad: preventive }, { name: 'Correctivo', cantidad: corrective }]; }, [records]);
-  const ranking = useMemo(() => { const activeStaff = users.filter(u => u.role === Role.OPERATOR || u.role === Role.LEADER); return activeStaff.map(u => ({ ...u, score: records.filter(r => r.userId === u.id).length })).sort((a, b) => b.score - a.score).slice(0, 3); }, [users, records]);
   const filteredRecords = useMemo(() => { return records.filter(r => { const matchUser = historyFilter.userId === 'ALL' || r.userId === historyFilter.userId; let matchDate = true; if (historyFilter.dateFrom && historyFilter.dateTo) { matchDate = isWithinInterval(parseISO(r.date), { start: startOfDay(parseISO(historyFilter.dateFrom)), end: endOfDay(parseISO(historyFilter.dateTo)) }); } const matchType = historyFilter.type === 'ALL' ? true : historyFilter.type === 'ISSUE' ? r.isIssue : !r.isIssue; return matchUser && matchDate && matchType; }).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()); }, [records, historyFilter]);
 
-  const exportToCSV = () => { /* ... (CSV logic same as before) ... */ 
+  const exportToCSV = () => {
     const headers = "Fecha,Hora,Maquina,Usuario,Tipo,Observaciones\n";
     const rows = filteredRecords.map(r => {
       const u = users.find(u => u.id === r.userId)?.name || "Desconocido";
@@ -564,95 +557,83 @@ const ManagerView: React.FC<{ users: User[]; machines: Machine[]; records: Maint
       
       {activePanel === 'STATS' && (<div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
         
-        {/* NUEVO DASHBOARD SUPERIOR: 4 CARDS */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-            <Card className="bg-slate-900 text-white border-none"><div className="flex items-center gap-3 mb-2"><HardDrive className="text-orange-500 w-5 h-5" /><span className="text-[10px] font-black uppercase tracking-widest opacity-70">Activos Totales</span></div><p className="text-4xl font-black">{kpiData.totalAssets}</p></Card>
-            <Card className="bg-white border-emerald-100"><div className="flex items-center gap-3 mb-2"><Activity className="text-emerald-500 w-5 h-5" /><span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Cumplimiento</span></div><p className="text-4xl font-black text-emerald-600">{kpiData.complianceRate}%</p></Card>
-            <Card className="bg-white border-red-100"><div className="flex items-center gap-3 mb-2"><Timer className="text-red-500 w-5 h-5" /><span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Tiempo Parada</span></div><p className="text-4xl font-black text-red-600">{kpiData.totalDowntime}<span className="text-sm text-slate-400 ml-1">min</span></p></Card>
-            <Card className="bg-white border-blue-100"><div className="flex items-center gap-3 mb-2"><ClipboardList className="text-blue-500 w-5 h-5" /><span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Tareas Totales</span></div><p className="text-4xl font-black text-blue-600">{kpiData.totalTasks}</p></Card>
+        {/* SELECTOR GLOBAL */}
+        <div className="bg-slate-800 p-4 rounded-2xl flex justify-between items-center">
+            <h3 className="text-white font-bold uppercase text-sm flex items-center gap-2"><Filter className="w-4 h-4 text-orange-500"/> Filtro de Planta:</h3>
+            <select className="bg-slate-700 text-white font-bold p-2 rounded-xl outline-none border border-slate-600" value={selectedMachineId} onChange={e => setSelectedMachineId(e.target.value)}>
+                <option value="ALL">Vista Global (Todas)</option>
+                {machines.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+            </select>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-            {/* SECCION 1: DETALLE POR MAQUINA */}
-            <Card className="lg:col-span-2">
-                <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
-                    <h3 className="text-xl font-black uppercase text-slate-800 flex items-center gap-2"><Search className="w-5 h-5 text-orange-600"/> Análisis por Equipo</h3>
-                    <select className="bg-slate-50 border-2 border-slate-100 p-3 rounded-xl text-sm font-bold text-slate-700 outline-none focus:border-orange-500 cursor-pointer min-w-[200px]" value={selectedMachineId || ''} onChange={e => setSelectedMachineId(e.target.value)}>
-                        <option value="">-- Seleccionar Máquina --</option>
-                        {machines.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
-                    </select>
-                </div>
-                
-                {selectedMachineStats ? (
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6 animate-in fade-in">
-                        <div className="p-4 bg-orange-50 rounded-2xl border border-orange-100">
-                            <p className="text-[10px] font-black text-orange-400 uppercase tracking-widest mb-1">Última Revisión Operario</p>
-                            <p className="text-xl font-black text-slate-800">{selectedMachineStats.lastOp}</p>
-                            <p className="text-[10px] text-slate-400 mt-1">Frecuencia: {selectedMachineStats.operatorInterval} días</p>
-                        </div>
-                        <div className="p-4 bg-amber-50 rounded-2xl border border-amber-100">
-                            <p className="text-[10px] font-black text-amber-600 uppercase tracking-widest mb-1">Última Revisión Líder</p>
-                            <p className="text-xl font-black text-slate-800">{selectedMachineStats.lastLd}</p>
-                            <p className="text-[10px] text-slate-400 mt-1">Frecuencia: {selectedMachineStats.leaderInterval} días</p>
-                        </div>
-                        <div className="p-4 bg-red-50 rounded-2xl border border-red-100">
-                            <p className="text-[10px] font-black text-red-400 uppercase tracking-widest mb-1">Paradas Acumuladas</p>
-                            <p className="text-xl font-black text-red-600">{selectedMachineStats.totalDown} min</p>
-                            <p className="text-[10px] text-slate-400 mt-1">En {selectedMachineStats.recordCount} registros</p>
-                        </div>
-                    </div>
-                ) : (
-                    <div className="h-32 flex items-center justify-center text-slate-300 italic font-bold">Seleccione un equipo para ver detalles</div>
-                )}
-            </Card>
+        {/* KPI CARDS (FILTRADAS) */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            <Card className="bg-slate-900 text-white border-none"><div className="flex items-center gap-3 mb-2"><HardDrive className="text-orange-500 w-5 h-5" /><span className="text-[10px] font-black uppercase tracking-widest opacity-70">Activos</span></div><p className="text-4xl font-black">{kpiData.totalAssets}</p></Card>
+            <Card className="bg-white border-emerald-100"><div className="flex items-center gap-3 mb-2"><Activity className="text-emerald-500 w-5 h-5" /><span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Cumplimiento</span></div><p className="text-4xl font-black text-emerald-600">{kpiData.complianceRate}%</p></Card>
+            <Card className="bg-white border-red-100"><div className="flex items-center gap-3 mb-2"><Timer className="text-red-500 w-5 h-5" /><span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Tiempo Parada</span></div><p className="text-4xl font-black text-red-600">{kpiData.totalDowntime}<span className="text-sm text-slate-400 ml-1">min</span></p></Card>
+            <Card className="bg-white border-blue-100"><div className="flex items-center gap-3 mb-2"><Gauge className="text-blue-500 w-5 h-5" /><span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Eficiencia</span></div><p className="text-4xl font-black text-blue-600">{kpiData.efficiency}%</p></Card>
+        </div>
 
-            {/* SECCION 2: TOP FALLAS */}
-            <Card>
-                <h3 className="text-sm font-black uppercase text-slate-500 mb-4">Top Paradas (Pareto)</h3>
-                <div className="h-48">
+        {/* GRAFICO PIE Y TENDENCIAS */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            <Card className="flex flex-col items-center justify-center">
+                <h3 className="text-lg font-black uppercase text-slate-700 w-full text-center mb-4">Salud del Parque</h3>
+                <div className="h-[200px] w-full"><ResponsiveContainer><PieChart><Pie data={stats} cx="50%" cy="50%" innerRadius={60} outerRadius={80} paddingAngle={5} dataKey="value">{stats.map((e, i) => <Cell key={i} fill={e.color} strokeWidth={0} />)}</Pie><Tooltip contentStyle={{borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)'}} /><Legend verticalAlign="bottom" /></PieChart></ResponsiveContainer></div>
+            </Card>
+            <Card className="lg:col-span-2">
+                <h3 className="text-xl font-black uppercase text-slate-800 flex items-center gap-2 mb-4"><TrendingUp className="w-5 h-5 text-orange-600"/> Tendencias Históricas</h3>
+                <div className="h-64 w-full">
                     <ResponsiveContainer width="100%" height="100%">
-                        <BarChart data={downtimeData} layout="vertical" margin={{ top: 0, right: 30, left: 0, bottom: 0 }}>
-                            <XAxis type="number" hide />
-                            <YAxis dataKey="name" type="category" width={80} tick={{fontSize: 9}} />
-                            <Tooltip cursor={{fill: 'transparent'}} />
-                            <Bar dataKey="value" fill="#ef4444" radius={[0, 4, 4, 0]} barSize={20} />
-                        </BarChart>
+                        <AreaChart data={trendData}>
+                            <defs><linearGradient id="colorSplit" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#f97316" stopOpacity={0.8}/><stop offset="95%" stopColor="#f97316" stopOpacity={0}/></linearGradient></defs>
+                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                            <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{fontSize: 10, fill: '#94a3b8'}} />
+                            <YAxis axisLine={false} tickLine={false} tick={{fontSize: 10, fill: '#94a3b8'}} />
+                            <Tooltip />
+                            <Area type="monotone" dataKey="tasks" stroke="#f97316" fillOpacity={1} fill="url(#colorSplit)" />
+                        </AreaChart>
                     </ResponsiveContainer>
                 </div>
             </Card>
         </div>
 
-        {/* GRAFICO DE LINEA TENDENCIAS */}
+        {/* FILA 2: CALENDARIO GLOBAL */}
+        <div className="w-full">
+          <MiniCalendar machines={filteredMachines} records={records} users={users} mode="MANAGER" />
+        </div>
+
+        {/* LISTA USUARIOS CON SEMAFORO */}
         <Card>
-            <div className="flex justify-between items-center mb-6">
-                <h3 className="text-xl font-black uppercase text-slate-800 flex items-center gap-2"><TrendingUp className="w-5 h-5 text-orange-600"/> Tendencias Históricas</h3>
-                <div className="flex bg-slate-100 p-1 rounded-xl">
-                    <button onClick={() => setChartMetric('DOWNTIME')} className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${chartMetric === 'DOWNTIME' ? 'bg-white shadow text-slate-900' : 'text-slate-400'}`}>T. Parada</button>
-                    <button onClick={() => setChartMetric('TASKS')} className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${chartMetric === 'TASKS' ? 'bg-white shadow text-slate-900' : 'text-slate-400'}`}>Actividad</button>
-                </div>
-            </div>
-            <div className="h-64 w-full">
-                <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={trendData}>
-                        <defs>
-                            <linearGradient id="colorSplit" x1="0" y1="0" x2="0" y2="1">
-                                <stop offset="5%" stopColor={chartMetric === 'DOWNTIME' ? '#ef4444' : '#f97316'} stopOpacity={0.8}/>
-                                <stop offset="95%" stopColor={chartMetric === 'DOWNTIME' ? '#ef4444' : '#f97316'} stopOpacity={0}/>
-                            </linearGradient>
-                        </defs>
-                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                        <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{fontSize: 10, fill: '#94a3b8'}} />
-                        <YAxis axisLine={false} tickLine={false} tick={{fontSize: 10, fill: '#94a3b8'}} />
-                        <Tooltip />
-                        <Area type="monotone" dataKey={chartMetric === 'DOWNTIME' ? 'downtime' : 'tasks'} stroke={chartMetric === 'DOWNTIME' ? '#ef4444' : '#f97316'} fillOpacity={1} fill="url(#colorSplit)" />
-                    </AreaChart>
-                </ResponsiveContainer>
+            <h3 className="text-xl font-black uppercase text-slate-700 border-b pb-6 mb-8 flex items-center gap-3"><Users className="text-orange-600" /> Productividad Mensual</h3>
+            <div className="space-y-4 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
+                {users.filter(u => u.role === Role.OPERATOR || u.role === Role.LEADER).map(u => { 
+                    const userRecords = records.filter(r => r.userId === u.id);
+                    const count = userRecords.length;
+                    const preventiveCount = userRecords.filter(r => !r.isIssue).length;
+                    const efficiencyRate = count > 0 ? Math.round((preventiveCount / count) * 100) : 100;
+                    
+                    // Semáforos (Colores)
+                    const volumeColor = count > 10 ? 'bg-emerald-500' : count > 5 ? 'bg-yellow-500' : 'bg-red-500';
+                    const effColor = efficiencyRate > 90 ? 'text-emerald-600 bg-emerald-50 border-emerald-200' : efficiencyRate > 70 ? 'text-yellow-600 bg-yellow-50 border-yellow-200' : 'text-red-600 bg-red-50 border-red-200';
+
+                    return (
+                        <div key={u.id} className="flex justify-between items-center p-4 bg-slate-50 rounded-2xl border border-slate-100 hover:border-orange-300 transition-colors">
+                            <div>
+                                <span className="font-black text-slate-800 uppercase text-xs tracking-tight block">{u.name}</span>
+                                <span className={`text-[9px] font-bold uppercase ${u.role === Role.LEADER ? 'text-amber-600' : 'text-slate-400'}`}>{u.role === Role.LEADER ? 'Resp. Mantenimiento' : 'Operario Línea'}</span>
+                            </div>
+                            <div className="flex items-center gap-4">
+                                <div className="text-right flex flex-col items-end gap-1">
+                                    <div className="flex items-center gap-1 justify-end"><div className={`w-2 h-2 rounded-full ${volumeColor}`}></div><span className="text-[10px] font-black">{count} Tareas</span></div>
+                                    <span className={`text-[9px] font-black px-2 py-0.5 rounded border ${effColor}`}>{efficiencyRate}% Efectividad</span>
+                                </div>
+                                <button onClick={() => openWAModal(u)}><MessageSquare className="w-5 h-5 text-emerald-500 cursor-pointer hover:scale-110 transition-transform" /></button>
+                            </div>
+                        </div>
+                    ); 
+                })}
             </div>
         </Card>
-
-        {/* RESTO DE LOS COMPONENTES ORIGINALES */}
-        <div className="w-full"><MiniCalendar machines={machines} records={records} users={users} mode="MANAGER" /></div>
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8"><Card><h3 className="text-xl font-black uppercase text-slate-700 border-b pb-6 mb-8 flex items-center gap-3"><BarChart3 className="text-orange-600" /> Plan vs. Incidencias</h3><div className="h-[300px] w-full"><ResponsiveContainer width="100%" height="100%"><BarChart data={maintenanceTypeStats}><CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" /><XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fontSize: 10, fontWeight: 'bold', fill: '#94a3b8'}} /><YAxis axisLine={false} tickLine={false} tick={{fontSize: 10, fontWeight: 'bold', fill: '#94a3b8'}} /><Tooltip cursor={{fill: '#f8fafc'}} contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'}} /><Bar dataKey="cantidad" fill="#f97316" radius={[10, 10, 0, 0]} barSize={60} /></BarChart></ResponsiveContainer></div></Card><Card><h3 className="text-xl font-black uppercase text-slate-700 border-b pb-6 mb-8 flex items-center gap-3"><Users className="text-orange-600" /> Productividad Mensual</h3><div className="space-y-4 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">{users.filter(u => u.role === Role.OPERATOR || u.role === Role.LEADER).map(u => { const count = records.filter(r => r.userId === u.id && isSameMonth(parseISO(r.date), startOfMonth(new Date()))).length; return (<div key={u.id} className="flex justify-between items-center p-4 bg-slate-50 rounded-2xl border border-slate-100 hover:border-orange-300 transition-colors"><div><span className="font-black text-slate-800 uppercase text-xs tracking-tight block">{u.name}</span><span className={`text-[9px] font-bold uppercase ${u.role === Role.LEADER ? 'text-amber-600' : 'text-slate-400'}`}>{u.role === Role.LEADER ? 'Resp. Mantenimiento' : 'Operario Línea'}</span></div><div className="flex items-center gap-3"><span className="bg-white shadow-sm px-3 py-1 rounded-lg text-[10px] font-black uppercase text-orange-600 border border-orange-100">{count} Tareas</span><button onClick={() => openWAModal(u)}><MessageSquare className="w-5 h-5 text-emerald-500 cursor-pointer hover:scale-110 transition-transform" /></button></div></div>); })}</div></Card></div>
       </div>)}
       
       {/* ... HISTORY, MACHINES, USERS, CONFIG siguen igual ... */}
