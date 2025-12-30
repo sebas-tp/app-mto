@@ -4,11 +4,11 @@ import {
   MessageSquare, ClipboardList, Database, Plus, UserPlus, History, HardDrive, 
   UserCog, LayoutDashboard, X, Calendar as CalendarIcon, Filter, Trophy, Search, Lock, Fingerprint, Loader2,
   Trash2, Pencil, FileSpreadsheet, FileText, ChevronLeft, ChevronRight, Clock, Send, Download, Smartphone,
-  ListChecks, Ban, Activity, Timer, TrendingUp, Gauge, CheckSquare
+  ListChecks, Ban, Activity, Timer, TrendingUp, Gauge, CheckSquare, Percent
 } from 'lucide-react';
 import { 
   PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend,
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, AreaChart, Area
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, AreaChart, Area, LineChart, Line
 } from 'recharts';
 import { 
   format, addDays, isPast, parseISO, startOfMonth, isSameMonth, 
@@ -240,10 +240,7 @@ export default function App() {
     if (adminPass === 'admin123') { const admin = users.find(u => u.role === Role.MANAGER); if (admin) { setCurrentUser(admin); localStorage.setItem('local_session_user', JSON.stringify(admin)); setView('DASHBOARD'); setShowAdminLogin(false); setAdminPass(''); } else { alert("No se encontró usuario Gerente en la base de datos."); } } else { alert("Contraseña incorrecta."); } 
   };
   const handleLogout = () => { setCurrentUser(null); localStorage.removeItem('local_session_user'); setView('LOGIN'); };
-  
-  // FUNCION SEED ELIMINADA POR SEGURIDAD
   const seedDB = async () => { alert("Función desactivada."); };
-
   const getRoleDisplayName = (role?: Role) => { if (role === Role.LEADER) return "RESP. MANTENIMIENTO"; if (role === Role.MANAGER) return "GERENCIA"; return "OPERARIO"; };
 
   if (view === 'LOGIN') {
@@ -382,7 +379,6 @@ const OperatorView: React.FC<{ user: User; machines: Machine[]; records: Mainten
   );
 };
 
-// ... LeaderView y ManagerView se mantienen igual (incluyen la mejora del calendario) ...
 const LeaderView: React.FC<{ user: User; machines: Machine[]; records: MaintenanceRecord[]; checklistItems: ChecklistItem[] }> = ({ user, machines, records, checklistItems }) => {
   const [closingIssue, setClosingIssue] = useState<MaintenanceRecord | null>(null);
   const [closingComment, setClosingComment] = useState('');
@@ -456,39 +452,30 @@ const ManagerView: React.FC<{ users: User[]; machines: Machine[]; records: Maint
   const [editingMachineId, setEditingMachineId] = useState<string | null>(null);
   const [machineForm, setMachineForm] = useState({ name: '', operatorInterval: 15, leaderInterval: 30, operatorId: '', leaderId: '', baseDate: new Date().toISOString().slice(0, 10) });
   
-  // SELECTOR GLOBAL DE MAQUINA PARA STATS
   const [selectedMachineId, setSelectedMachineId] = useState<string>('ALL');
+  const [chartMetric, setChartMetric] = useState<'DOWNTIME' | 'EFFECTIVENESS'>('EFFECTIVENESS');
 
   const [newItemText, setNewItemText] = useState('');
   const [newItemRole, setNewItemRole] = useState<Role>(Role.OPERATOR);
   const [showWAModal, setShowWAModal] = useState(false);
   const [waTargetUser, setWaTargetUser] = useState<User | null>(null);
 
-  // FILTRADO DE MAQUINAS Y REGISTROS SEGUN SELECTOR
   const filteredMachines = useMemo(() => selectedMachineId === 'ALL' ? machines : machines.filter(m => m.id === selectedMachineId), [machines, selectedMachineId]);
   const filteredRecordsForStats = useMemo(() => selectedMachineId === 'ALL' ? records : records.filter(r => r.machineId === selectedMachineId), [records, selectedMachineId]);
 
-  // KPI CALCULATIONS (DINÁMICOS)
   const kpiData = useMemo(() => {
     const totalAssets = filteredMachines.length;
     const totalTasks = filteredRecordsForStats.length;
     const totalDowntime = filteredRecordsForStats.reduce((acc, r) => acc + (r.downtime || 0), 0);
-    
-    // Efficiency: (Tiempo Total Disponible - Tiempo de Parada) / Tiempo Total Disponible
-    // Asumimos 24/7 de disponibilidad teórica (o un turno estándar) para el cálculo.
-    // Ejemplo: Si hay 10 máquinas, en 30 días son 10 * 30 * 24 * 60 minutos disponibles.
     const minutesInMonth = 30 * 24 * 60;
     const totalAvailableTime = totalAssets * minutesInMonth; 
     const efficiency = totalAvailableTime > 0 ? Math.max(0, Math.round(((totalAvailableTime - totalDowntime) / totalAvailableTime) * 100)) : 100;
-
-    // Compliance (Adherencia): % de Máquinas que NO tienen tareas vencidas HOY
     const compliantMachines = filteredMachines.filter(m => {
         const opDue = isPast(addDays(parseISO(m.lastOperatorDate), m.operatorInterval)) && !isToday(addDays(parseISO(m.lastOperatorDate), m.operatorInterval));
         const ldDue = isPast(addDays(parseISO(m.lastLeaderDate), m.leaderInterval)) && !isToday(addDays(parseISO(m.lastLeaderDate), m.leaderInterval));
         return !opDue && !ldDue;
     }).length;
     const complianceRate = totalAssets > 0 ? Math.round((compliantMachines / totalAssets) * 100) : 100;
-
     return { totalAssets, totalTasks, totalDowntime, complianceRate, efficiency };
   }, [filteredMachines, filteredRecordsForStats]);
 
@@ -502,16 +489,28 @@ const ManagerView: React.FC<{ users: User[]; machines: Machine[]; records: Maint
       return [{ name: 'Operativo', value: total - due, color: '#10b981' }, { name: 'Vencido', value: due, color: '#ef4444' }]; 
   }, [filteredMachines]);
 
-  // TREND CHART DATA
+  // TREND CHART: DOWNTIME vs EFFECTIVENESS (Quality)
   const trendData = useMemo(() => {
     const grouped = filteredRecordsForStats.reduce((acc: any, r) => {
         const date = r.date.slice(0, 10);
-        if (!acc[date]) acc[date] = { date, downtime: 0, tasks: 0 };
+        if (!acc[date]) acc[date] = { date, downtime: 0, preventive: 0, total: 0 };
         acc[date].downtime += (r.downtime || 0);
-        acc[date].tasks += 1;
+        if (!r.isIssue) acc[date].preventive += 1;
+        acc[date].total += 1;
         return acc;
     }, {});
-    return Object.values(grouped).sort((a: any, b: any) => new Date(a.date).getTime() - new Date(b.date).getTime());
+    
+    return Object.values(grouped).map((day: any) => ({
+        ...day,
+        effectiveness: day.total > 0 ? Math.round((day.preventive / day.total) * 100) : 0
+    })).sort((a: any, b: any) => new Date(a.date).getTime() - new Date(b.date).getTime());
+  }, [filteredRecordsForStats]);
+
+  // PLAN vs INCIDENCIAS (Volume)
+  const planVsRealData = useMemo(() => {
+     const preventive = filteredRecordsForStats.filter(r => !r.isIssue).length;
+     const corrective = filteredRecordsForStats.filter(r => r.isIssue).length;
+     return [{ name: 'Plan (Preventivo)', value: preventive }, { name: 'Incidencias (Correctivo)', value: corrective }];
   }, [filteredRecordsForStats]);
 
   const filteredRecords = useMemo(() => { return records.filter(r => { const matchUser = historyFilter.userId === 'ALL' || r.userId === historyFilter.userId; let matchDate = true; if (historyFilter.dateFrom && historyFilter.dateTo) { matchDate = isWithinInterval(parseISO(r.date), { start: startOfDay(parseISO(historyFilter.dateFrom)), end: endOfDay(parseISO(historyFilter.dateTo)) }); } const matchType = historyFilter.type === 'ALL' ? true : historyFilter.type === 'ISSUE' ? r.isIssue : !r.isIssue; return matchUser && matchDate && matchType; }).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()); }, [records, historyFilter]);
@@ -557,7 +556,7 @@ const ManagerView: React.FC<{ users: User[]; machines: Machine[]; records: Maint
       
       {activePanel === 'STATS' && (<div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
         
-        {/* SELECTOR GLOBAL */}
+        {/* FILTRO GLOBAL */}
         <div className="bg-slate-800 p-4 rounded-2xl flex justify-between items-center">
             <h3 className="text-white font-bold uppercase text-sm flex items-center gap-2"><Filter className="w-4 h-4 text-orange-500"/> Filtro de Planta:</h3>
             <select className="bg-slate-700 text-white font-bold p-2 rounded-xl outline-none border border-slate-600" value={selectedMachineId} onChange={e => setSelectedMachineId(e.target.value)}>
@@ -566,122 +565,94 @@ const ManagerView: React.FC<{ users: User[]; machines: Machine[]; records: Maint
             </select>
         </div>
 
-        {/* KPI CARDS (FILTRADAS) */}
+        {/* KPI CARDS */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
             <Card className="bg-slate-900 text-white border-none"><div className="flex items-center gap-3 mb-2"><HardDrive className="text-orange-500 w-5 h-5" /><span className="text-[10px] font-black uppercase tracking-widest opacity-70">Activos</span></div><p className="text-4xl font-black">{kpiData.totalAssets}</p></Card>
-            <Card className="bg-white border-emerald-100"><div className="flex items-center gap-3 mb-2"><Activity className="text-emerald-500 w-5 h-5" /><span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Cumplimiento</span></div><p className="text-4xl font-black text-emerald-600">{kpiData.complianceRate}%</p></Card>
+            <Card className="bg-white border-emerald-100"><div className="flex items-center gap-3 mb-2"><Activity className="text-emerald-500 w-5 h-5" /><span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Cumplimiento (Plan)</span></div><p className="text-4xl font-black text-emerald-600">{kpiData.complianceRate}%</p></Card>
             <Card className="bg-white border-red-100"><div className="flex items-center gap-3 mb-2"><Timer className="text-red-500 w-5 h-5" /><span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Tiempo Parada</span></div><p className="text-4xl font-black text-red-600">{kpiData.totalDowntime}<span className="text-sm text-slate-400 ml-1">min</span></p></Card>
-            <Card className="bg-white border-blue-100"><div className="flex items-center gap-3 mb-2"><Gauge className="text-blue-500 w-5 h-5" /><span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Eficiencia</span></div><p className="text-4xl font-black text-blue-600">{kpiData.efficiency}%</p></Card>
+            <Card className="bg-white border-blue-100"><div className="flex items-center gap-3 mb-2"><Gauge className="text-blue-500 w-5 h-5" /><span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Eficiencia (OEE)</span></div><p className="text-4xl font-black text-blue-600">{kpiData.efficiency}%</p></Card>
         </div>
 
-        {/* GRAFICO PIE Y TENDENCIAS */}
+        {/* TENDENCIAS Y SALUD */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
             <Card className="flex flex-col items-center justify-center">
                 <h3 className="text-lg font-black uppercase text-slate-700 w-full text-center mb-4">Salud del Parque</h3>
                 <div className="h-[200px] w-full"><ResponsiveContainer><PieChart><Pie data={stats} cx="50%" cy="50%" innerRadius={60} outerRadius={80} paddingAngle={5} dataKey="value">{stats.map((e, i) => <Cell key={i} fill={e.color} strokeWidth={0} />)}</Pie><Tooltip contentStyle={{borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)'}} /><Legend verticalAlign="bottom" /></PieChart></ResponsiveContainer></div>
             </Card>
+            
             <Card className="lg:col-span-2">
-                <h3 className="text-xl font-black uppercase text-slate-800 flex items-center gap-2 mb-4"><TrendingUp className="w-5 h-5 text-orange-600"/> Tendencias Históricas</h3>
+                <div className="flex justify-between items-center mb-6">
+                    <h3 className="text-xl font-black uppercase text-slate-800 flex items-center gap-2"><TrendingUp className="w-5 h-5 text-orange-600"/> Evolución Histórica</h3>
+                    <div className="flex bg-slate-100 p-1 rounded-xl">
+                        <button onClick={() => setChartMetric('EFFECTIVENESS')} className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${chartMetric === 'EFFECTIVENESS' ? 'bg-white shadow text-emerald-700' : 'text-slate-400'}`}>% Efectividad</button>
+                        <button onClick={() => setChartMetric('DOWNTIME')} className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${chartMetric === 'DOWNTIME' ? 'bg-white shadow text-red-700' : 'text-slate-400'}`}>T. Parada</button>
+                    </div>
+                </div>
                 <div className="h-64 w-full">
                     <ResponsiveContainer width="100%" height="100%">
                         <AreaChart data={trendData}>
-                            <defs><linearGradient id="colorSplit" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#f97316" stopOpacity={0.8}/><stop offset="95%" stopColor="#f97316" stopOpacity={0}/></linearGradient></defs>
+                            <defs>
+                                <linearGradient id="colorGreen" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#10b981" stopOpacity={0.8}/><stop offset="95%" stopColor="#10b981" stopOpacity={0}/></linearGradient>
+                                <linearGradient id="colorRed" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#ef4444" stopOpacity={0.8}/><stop offset="95%" stopColor="#ef4444" stopOpacity={0}/></linearGradient>
+                            </defs>
                             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
                             <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{fontSize: 10, fill: '#94a3b8'}} />
                             <YAxis axisLine={false} tickLine={false} tick={{fontSize: 10, fill: '#94a3b8'}} />
                             <Tooltip />
-                            <Area type="monotone" dataKey="tasks" stroke="#f97316" fillOpacity={1} fill="url(#colorSplit)" />
+                            <Area type="monotone" dataKey={chartMetric === 'DOWNTIME' ? 'downtime' : 'effectiveness'} stroke={chartMetric === 'DOWNTIME' ? '#ef4444' : '#10b981'} fillOpacity={1} fill={chartMetric === 'DOWNTIME' ? 'url(#colorRed)' : 'url(#colorGreen)'} />
                         </AreaChart>
                     </ResponsiveContainer>
                 </div>
             </Card>
         </div>
 
-        {/* FILA 2: CALENDARIO GLOBAL */}
-        <div className="w-full">
-          <MiniCalendar machines={filteredMachines} records={records} users={users} mode="MANAGER" />
-        </div>
+        <div className="w-full"><MiniCalendar machines={filteredMachines} records={records} users={users} mode="MANAGER" /></div>
 
-        {/* LISTA USUARIOS CON SEMAFORO */}
-        <Card>
-            <h3 className="text-xl font-black uppercase text-slate-700 border-b pb-6 mb-8 flex items-center gap-3"><Users className="text-orange-600" /> Productividad Mensual</h3>
-            <div className="space-y-4 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
-                {users.filter(u => u.role === Role.OPERATOR || u.role === Role.LEADER).map(u => { 
-                    const userRecords = records.filter(r => r.userId === u.id);
-                    const count = userRecords.length;
-                    const preventiveCount = userRecords.filter(r => !r.isIssue).length;
-                    const efficiencyRate = count > 0 ? Math.round((preventiveCount / count) * 100) : 100;
-                    
-                    // Semáforos (Colores)
-                    const volumeColor = count > 10 ? 'bg-emerald-500' : count > 5 ? 'bg-yellow-500' : 'bg-red-500';
-                    const effColor = efficiencyRate > 90 ? 'text-emerald-600 bg-emerald-50 border-emerald-200' : efficiencyRate > 70 ? 'text-yellow-600 bg-yellow-50 border-yellow-200' : 'text-red-600 bg-red-50 border-red-200';
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            <Card>
+                <h3 className="text-xl font-black uppercase text-slate-700 border-b pb-6 mb-8 flex items-center gap-3"><BarChart3 className="text-orange-600" /> Plan vs. Incidencias (Volumen)</h3>
+                <div className="h-[300px] w-full"><ResponsiveContainer width="100%" height="100%"><BarChart data={planVsRealData}><CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" /><XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fontSize: 10, fontWeight: 'bold', fill: '#94a3b8'}} /><YAxis axisLine={false} tickLine={false} tick={{fontSize: 10, fontWeight: 'bold', fill: '#94a3b8'}} /><Tooltip cursor={{fill: '#f8fafc'}} contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'}} /><Bar dataKey="value" fill="#f97316" radius={[10, 10, 0, 0]} barSize={60} /></BarChart></ResponsiveContainer></div>
+            </Card>
+            
+            {/* SEMÁFORO DE OPERARIOS */}
+            <Card>
+                <h3 className="text-xl font-black uppercase text-slate-700 border-b pb-6 mb-8 flex items-center gap-3"><Users className="text-orange-600" /> Productividad & Calidad</h3>
+                <div className="space-y-4 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
+                    {users.filter(u => u.role === Role.OPERATOR || u.role === Role.LEADER).map(u => { 
+                        const userRecords = records.filter(r => r.userId === u.id);
+                        const count = userRecords.length;
+                        const preventiveCount = userRecords.filter(r => !r.isIssue).length;
+                        const efficiencyRate = count > 0 ? Math.round((preventiveCount / count) * 100) : 100;
+                        
+                        const volumeColor = count > 10 ? 'bg-emerald-500' : count > 5 ? 'bg-yellow-500' : 'bg-red-500';
+                        const effColor = efficiencyRate > 90 ? 'text-emerald-700 bg-emerald-50 border-emerald-200' : efficiencyRate > 70 ? 'text-yellow-700 bg-yellow-50 border-yellow-200' : 'text-red-700 bg-red-50 border-red-200';
 
-                    return (
-                        <div key={u.id} className="flex justify-between items-center p-4 bg-slate-50 rounded-2xl border border-slate-100 hover:border-orange-300 transition-colors">
-                            <div>
-                                <span className="font-black text-slate-800 uppercase text-xs tracking-tight block">{u.name}</span>
-                                <span className={`text-[9px] font-bold uppercase ${u.role === Role.LEADER ? 'text-amber-600' : 'text-slate-400'}`}>{u.role === Role.LEADER ? 'Resp. Mantenimiento' : 'Operario Línea'}</span>
-                            </div>
-                            <div className="flex items-center gap-4">
-                                <div className="text-right flex flex-col items-end gap-1">
-                                    <div className="flex items-center gap-1 justify-end"><div className={`w-2 h-2 rounded-full ${volumeColor}`}></div><span className="text-[10px] font-black">{count} Tareas</span></div>
-                                    <span className={`text-[9px] font-black px-2 py-0.5 rounded border ${effColor}`}>{efficiencyRate}% Efectividad</span>
+                        return (
+                            <div key={u.id} className="flex justify-between items-center p-4 bg-slate-50 rounded-2xl border border-slate-100 hover:border-orange-300 transition-colors">
+                                <div>
+                                    <span className="font-black text-slate-800 uppercase text-xs tracking-tight block">{u.name}</span>
+                                    <span className={`text-[9px] font-bold uppercase ${u.role === Role.LEADER ? 'text-amber-600' : 'text-slate-400'}`}>{u.role === Role.LEADER ? 'Líder' : 'Operario'}</span>
                                 </div>
-                                <button onClick={() => openWAModal(u)}><MessageSquare className="w-5 h-5 text-emerald-500 cursor-pointer hover:scale-110 transition-transform" /></button>
+                                <div className="flex items-center gap-3">
+                                    <div className="flex flex-col items-end gap-1">
+                                        <div className="flex items-center gap-1"><div className={`w-2 h-2 rounded-full ${volumeColor}`}></div><span className="text-[10px] font-black uppercase">Vol: {count}</span></div>
+                                        <span className={`text-[9px] font-black px-2 py-0.5 rounded border uppercase ${effColor}`}>Efec: {efficiencyRate}%</span>
+                                    </div>
+                                    <button onClick={() => openWAModal(u)}><MessageSquare className="w-5 h-5 text-emerald-500 cursor-pointer hover:scale-110 transition-transform" /></button>
+                                </div>
                             </div>
-                        </div>
-                    ); 
-                })}
-            </div>
-        </Card>
+                        ); 
+                    })}
+                </div>
+            </Card>
+        </div>
       </div>)}
       
-      {/* ... HISTORY, MACHINES, USERS, CONFIG siguen igual ... */}
+      {/* ... (RESTO DE PANELES SIN CAMBIOS) ... */}
       {activePanel === 'HISTORY' && (<div className="space-y-8 animate-in fade-in zoom-in duration-300"><Card className="bg-slate-900 text-white border-none shadow-2xl shadow-slate-400/20 no-print"><div className="flex flex-col md:flex-row gap-6 items-end"><div className="w-full md:w-1/4 space-y-2"><label className="text-[10px] font-black uppercase text-slate-400 flex gap-2"><CalendarIcon className="w-3 h-3"/> Desde</label><input type="date" className="w-full bg-slate-800 border border-slate-700 rounded-xl p-3 text-sm font-bold outline-none focus:border-orange-500 text-white" value={historyFilter.dateFrom} onChange={e => setHistoryFilter({...historyFilter, dateFrom: e.target.value})} /></div><div className="w-full md:w-1/4 space-y-2"><label className="text-[10px] font-black uppercase text-slate-400 flex gap-2"><CalendarIcon className="w-3 h-3"/> Hasta</label><input type="date" className="w-full bg-slate-800 border border-slate-700 rounded-xl p-3 text-sm font-bold outline-none focus:border-orange-500 text-white" value={historyFilter.dateTo} onChange={e => setHistoryFilter({...historyFilter, dateTo: e.target.value})} /></div><div className="w-full md:w-1/4 space-y-2"><label className="text-[10px] font-black uppercase text-slate-400 flex gap-2"><UserCog className="w-3 h-3"/> Empleado</label><select className="w-full bg-slate-800 border border-slate-700 rounded-xl p-3 text-sm font-bold outline-none focus:border-orange-500 text-white cursor-pointer appearance-none" value={historyFilter.userId} onChange={e => setHistoryFilter({...historyFilter, userId: e.target.value})}><option value="ALL">Todos los Usuarios</option>{users.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}</select></div><div className="w-full md:w-1/4 space-y-2"><label className="text-[10px] font-black uppercase text-slate-400 flex gap-2"><Filter className="w-3 h-3"/> Tipo Registro</label><select className="w-full bg-slate-800 border border-slate-700 rounded-xl p-3 text-sm font-bold outline-none focus:border-orange-500 text-white cursor-pointer appearance-none" value={historyFilter.type} onChange={e => setHistoryFilter({...historyFilter, type: e.target.value})}><option value="ALL">Todo</option><option value="MANTO">Mantenimientos</option><option value="ISSUE">Fallas</option></select></div></div></Card><div className="flex gap-4 justify-end no-print"><IndustrialButton onClick={exportToCSV} variant="success"><FileSpreadsheet className="w-4 h-4"/> Exportar Excel (CSV)</IndustrialButton><IndustrialButton onClick={handlePrint} variant="dark"><FileText className="w-4 h-4"/> Imprimir Reporte PDF</IndustrialButton></div><Card className="p-0 overflow-hidden border-orange-100 print:shadow-none print:border-none"><div className="p-6 hidden print:block"><h1 className="text-3xl font-black uppercase">Reporte de Auditoría TPM</h1><p className="text-sm text-slate-500">Generado el: {format(new Date(), 'dd/MM/yyyy HH:mm')}</p></div><div className="overflow-x-auto"><table className="w-full text-left border-collapse"><thead className="bg-orange-50 text-orange-900 text-[10px] font-black uppercase tracking-widest print:bg-slate-200 print:text-slate-900"><tr><th className="p-6">Fecha</th><th className="p-6">Máquina</th><th className="p-6">Responsable</th><th className="p-6">Detalle</th><th className="p-6 text-center">Tipo</th></tr></thead><tbody className="text-xs font-medium text-slate-600">{filteredRecords.length > 0 ? filteredRecords.map(r => { const user = users.find(u => u.id === r.userId); const machine = machines.find(m => m.id === r.machineId); return (<tr key={r.id} className="border-b border-slate-100 hover:bg-slate-50 transition-colors group print:border-slate-300"><td className="p-6 font-bold whitespace-nowrap text-slate-400 group-hover:text-orange-600 transition-colors print:text-slate-900">{format(parseISO(r.date), 'dd/MM/yyyy HH:mm')}</td><td className="p-6 uppercase font-black text-slate-800">{machine?.name || 'Máquina Eliminada'}</td><td className="p-6"><div className="flex items-center gap-2"><span className="w-6 h-6 rounded-full bg-slate-200 flex items-center justify-center text-[10px] font-black text-slate-500 print:hidden">{user?.name.charAt(0)}</span><span className="font-bold">{user?.name}</span></div></td><td className="p-6 italic max-w-xs truncate print:whitespace-normal print:overflow-visible" title={r.observations}>{r.observations || <span className="text-slate-300">-</span>}</td><td className="p-6 text-center">{r.isIssue ? <span className="inline-flex items-center gap-1 bg-red-100 text-red-700 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-wider print:border print:border-red-500">Falla</span> : <span className="inline-flex items-center gap-1 bg-emerald-100 text-emerald-700 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-wider print:border print:border-emerald-500">OK</span>}</td></tr>); }) : <tr><td colSpan={5} className="p-12 text-center text-slate-400 font-bold uppercase text-sm">Sin registros</td></tr>}</tbody></table></div></Card></div>)}
-      
       {activePanel === 'MACHINES' && (<div className="grid grid-cols-1 lg:grid-cols-3 gap-12 animate-in fade-in duration-300"><Card className="lg:col-span-1 border-orange-200 bg-orange-50/10"><form onSubmit={handleMachineSubmit} className="space-y-6"><h3 className="text-2xl font-black text-slate-800 uppercase tracking-tighter flex items-center gap-3"><Plus className="text-orange-600" /> {editingMachineId ? 'Actualizar Activo' : 'Registro de Activo'}</h3><div className="space-y-2"><label className="text-[10px] font-black uppercase text-slate-400 ml-2">Nombre Técnico</label><input required className="w-full p-5 rounded-2xl border-2 border-slate-100 font-bold outline-none focus:border-orange-500 transition-all shadow-inner" placeholder="Prensa Hidráulica X-10" value={machineForm.name} onChange={e => setMachineForm({...machineForm, name: e.target.value})} /></div><div className="space-y-2"><label className="text-[10px] font-black uppercase text-slate-400 ml-2">Fecha Base / Último Manto</label><input type="date" required className="w-full p-5 rounded-2xl border-2 border-slate-100 font-bold outline-none focus:border-orange-500 transition-all shadow-inner" value={machineForm.baseDate} onChange={e => setMachineForm({...machineForm, baseDate: e.target.value})} /></div><div className="p-4 bg-white rounded-2xl border border-slate-200 space-y-4"><p className="text-xs font-black text-orange-600 uppercase">Manto. Operario (Ligero)</p><div className="space-y-2"><label className="text-[10px] font-black uppercase text-slate-400 ml-2">Asignar a:</label><select className="w-full p-3 rounded-xl border border-slate-200 text-sm font-bold" value={machineForm.operatorId} onChange={e => setMachineForm({...machineForm, operatorId: e.target.value})}><option value="">-- Sin Asignar --</option>{users.filter(u => u.role === Role.OPERATOR).map(u => <option key={u.id} value={u.id}>{u.name}</option>)}</select></div><div className="space-y-2"><label className="text-[10px] font-black uppercase text-slate-400 ml-2">Frecuencia (Días)</label><input type="number" required className="w-full p-3 rounded-xl border border-slate-200 text-sm font-bold" value={machineForm.operatorInterval} onChange={e => setMachineForm({...machineForm, operatorInterval: parseInt(e.target.value)})} /></div></div><div className="p-4 bg-white rounded-2xl border border-slate-200 space-y-4"><p className="text-xs font-black text-amber-600 uppercase">Manto. Líder (Pesado)</p><div className="space-y-2"><label className="text-[10px] font-black uppercase text-slate-400 ml-2">Asignar a:</label><select className="w-full p-3 rounded-xl border border-slate-200 text-sm font-bold" value={machineForm.leaderId} onChange={e => setMachineForm({...machineForm, leaderId: e.target.value})}><option value="">-- Sin Asignar --</option>{users.filter(u => u.role === Role.LEADER).map(u => <option key={u.id} value={u.id}>{u.name}</option>)}</select></div><div className="space-y-2"><label className="text-[10px] font-black uppercase text-slate-400 ml-2">Frecuencia (Días)</label><input type="number" required className="w-full p-3 rounded-xl border border-slate-200 text-sm font-bold" value={machineForm.leaderInterval} onChange={e => setMachineForm({...machineForm, leaderInterval: parseInt(e.target.value)})} /></div></div><div className="flex gap-2"><IndustrialButton fullWidth type="submit">{editingMachineId ? 'Guardar Cambios' : 'Dar de Alta'}</IndustrialButton>{editingMachineId && <button type="button" onClick={() => { setEditingMachineId(null); setMachineForm({ name: '', operatorInterval: 15, leaderInterval: 30, operatorId: '', leaderId: '', baseDate: new Date().toISOString().slice(0, 10) }); }} className="px-4 font-bold text-slate-400 hover:text-red-500">Cancelar</button>}</div></form></Card><div className="lg:col-span-2"><Card className="p-0 overflow-hidden"><table className="w-full text-left border-collapse"><thead className="bg-slate-900 text-white text-[10px] font-black uppercase tracking-widest"><tr><th className="p-6">Máquina</th><th className="p-6 text-center">Operario (Días)</th><th className="p-6 text-center">Líder (Días)</th><th className="p-6 text-right">Acciones</th></tr></thead><tbody className="text-xs font-bold text-slate-600">{machines.map(m => (<tr key={m.id} className="border-b border-slate-100 hover:bg-slate-50 transition-colors"><td className="p-6 text-slate-900 uppercase font-black tracking-tight">{m.name}</td><td className="p-6 text-center"><div className="flex flex-col items-center"><span className="text-orange-600">{m.operatorInterval}d</span><span className="text-[9px] text-slate-400 uppercase">{users.find(u => u.id === m.operatorId)?.name || 'N/A'}</span></div></td><td className="p-6 text-center"><div className="flex flex-col items-center"><span className="text-amber-700">{m.leaderInterval}d</span><span className="text-[9px] text-slate-400 uppercase">{users.find(u => u.id === m.leaderId)?.name || 'N/A'}</span></div></td><td className="p-6 text-right"><div className="flex items-center justify-end gap-3"><button onClick={() => handleEditMachine(m)} className="text-blue-400 hover:text-blue-600 transition-colors"><Pencil className="w-4 h-4" /></button><button onClick={() => handleDeleteMachine(m.id)} className="text-red-400 hover:text-red-600 transition-colors"><Trash2 className="w-4 h-4" /></button></div></td></tr>))}</tbody></table></Card></div></div>)}
-      
       {activePanel === 'USERS' && (<div className="grid grid-cols-1 lg:grid-cols-3 gap-12 animate-in fade-in duration-300"><Card className="lg:col-span-1 border-orange-200 bg-orange-50/10"><form onSubmit={addUser} className="space-y-6"><h3 className="text-2xl font-black text-slate-800 uppercase tracking-tighter flex items-center gap-3"><UserPlus className="text-orange-600" /> Nuevo Colaborador</h3><input required className="w-full p-5 rounded-2xl border-2 border-slate-100 font-bold outline-none focus:border-orange-500 transition-all shadow-inner" placeholder="Nombre y Apellido" value={userForm.name} onChange={e => setUserForm({...userForm, name: e.target.value})} /><input className="w-full p-5 rounded-2xl border-2 border-slate-100 font-bold outline-none focus:border-orange-500 transition-all shadow-inner" placeholder="Teléfono" value={userForm.phone} onChange={e => setUserForm({...userForm, phone: e.target.value})} /><div className="space-y-2"><label className="text-[10px] font-black uppercase text-slate-400 ml-2">Asignar PIN de Seguridad</label><input type="password" maxLength={4} className="w-full p-5 rounded-2xl border-2 border-slate-100 font-bold outline-none focus:border-orange-500 transition-all shadow-inner tracking-widest" placeholder="PIN" value={userForm.pin} onChange={e => setUserForm({...userForm, pin: e.target.value.replace(/[^0-9]/g, '')})} /></div><select className="w-full p-5 rounded-2xl border-2 border-slate-100 font-bold outline-none focus:border-orange-500 cursor-pointer shadow-inner" value={userForm.role} onChange={e => setUserForm({...userForm, role: e.target.value as Role})}><option value={Role.OPERATOR}>OPERARIO DE LÍNEA</option><option value={Role.LEADER}>RESP. MANTENIMIENTO GRAL.</option><option value={Role.MANAGER}>GERENCIA Y AUDITORÍA</option></select><IndustrialButton fullWidth type="submit">Alta de Usuario</IndustrialButton></form></Card><div className="lg:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-6">{users.map(u => (<Card key={u.id} className="flex justify-between items-center group border-slate-200 hover:border-orange-400 transition-all"><div className="flex items-center gap-5"><div className="bg-slate-50 p-4 rounded-2xl group-hover:bg-orange-50 group-hover:text-orange-600 transition-colors"><UserCog className="w-6 h-6" /></div><div><h4 className="font-black text-slate-900 uppercase text-sm tracking-tight">{u.name}</h4><span className="text-[9px] font-black text-orange-600 uppercase tracking-widest leading-none">{u.role === Role.LEADER ? 'RESP. MANTO.' : u.role}</span></div></div><div className="flex flex-col gap-2 text-right"><span className="text-[9px] font-bold text-slate-400 uppercase">PIN: ****</span><select className="bg-white border border-slate-100 p-2 rounded-xl text-[9px] font-black uppercase outline-none focus:border-orange-500" value={u.role} onChange={e => updateUserRole(u.id, e.target.value as Role)}><option value={Role.OPERATOR}>OPERARIO</option><option value={Role.LEADER}>RESP. MANTO.</option><option value={Role.MANAGER}>GERENCIA</option></select><button onClick={() => deleteUser(u.id)} className="text-[10px] font-black text-red-400 hover:text-red-600 uppercase flex items-center justify-end gap-1 mt-2"><Trash2 className="w-3 h-3" /> Eliminar</button></div></Card>))}</div></div>)}
-
-      {/* NUEVO PANEL: CONFIGURACIÓN CHECKLIST */}
-      {activePanel === 'CONFIG' && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 animate-in fade-in duration-300">
-            <Card className="lg:col-span-1 border-orange-200 bg-orange-50/10">
-                <form onSubmit={addChecklistItem} className="space-y-6">
-                    <h3 className="text-2xl font-black text-slate-800 uppercase tracking-tighter flex items-center gap-3"><ListChecks className="text-orange-600" /> Nueva Tarea</h3>
-                    <input className="w-full p-5 rounded-2xl border-2 border-slate-100 font-bold outline-none focus:border-orange-500 transition-all shadow-inner" placeholder="Ej: Verificar Aceite" value={newItemText} onChange={e => setNewItemText(e.target.value)} required />
-                    <div className="space-y-2">
-                        <label className="text-[10px] font-black uppercase text-slate-400 ml-2">Responsable de la Tarea</label>
-                        <select className="w-full p-5 rounded-2xl border-2 border-slate-100 font-bold outline-none focus:border-orange-500 cursor-pointer shadow-inner" value={newItemRole} onChange={e => setNewItemRole(e.target.value as Role)}>
-                            <option value={Role.OPERATOR}>OPERARIO (Manto. Autónomo)</option>
-                            <option value={Role.LEADER}>LIDER (Manto. Preventivo)</option>
-                        </select>
-                    </div>
-                    <IndustrialButton fullWidth type="submit">Agregar al Checklist Global</IndustrialButton>
-                    <hr className="border-slate-200"/>
-                    <IndustrialButton fullWidth type="button" variant="ghost" onClick={onInitChecklist}>Cargar Checklist Por Defecto</IndustrialButton>
-                </form>
-            </Card>
-            <div className="lg:col-span-2">
-                <Card>
-                    <h3 className="text-xl font-black uppercase text-slate-700 border-b pb-6 mb-8">Listado de Tareas Globales</h3>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        {checklistItems.map(item => (
-                            <div key={item.id} className="flex justify-between items-center p-4 bg-slate-50 rounded-2xl border border-slate-100">
-                                <div>
-                                    <p className="font-bold text-slate-800 text-sm">{item.label}</p>
-                                    <span className={`text-[9px] font-black uppercase tracking-widest ${item.roleTarget === Role.LEADER ? 'text-amber-600' : 'text-orange-600'}`}>
-                                        {item.roleTarget === Role.LEADER ? 'Para Líderes' : 'Para Operarios'}
-                                    </span>
-                                </div>
-                                <button onClick={() => deleteChecklistItem(item.id)} className="p-2 text-slate-300 hover:text-red-500 transition-colors"><Trash2 className="w-4 h-4" /></button>
-                            </div>
-                        ))}
-                    </div>
-                </Card>
-            </div>
-        </div>
-      )}
+      {activePanel === 'CONFIG' && (<div className="grid grid-cols-1 lg:grid-cols-3 gap-8 animate-in fade-in duration-300"><Card className="lg:col-span-1 border-orange-200 bg-orange-50/10"><form onSubmit={addChecklistItem} className="space-y-6"><h3 className="text-2xl font-black text-slate-800 uppercase tracking-tighter flex items-center gap-3"><ListChecks className="text-orange-600" /> Nueva Tarea</h3><input className="w-full p-5 rounded-2xl border-2 border-slate-100 font-bold outline-none focus:border-orange-500 transition-all shadow-inner" placeholder="Ej: Verificar Aceite" value={newItemText} onChange={e => setNewItemText(e.target.value)} required /><div className="space-y-2"><label className="text-[10px] font-black uppercase text-slate-400 ml-2">Responsable de la Tarea</label><select className="w-full p-5 rounded-2xl border-2 border-slate-100 font-bold outline-none focus:border-orange-500 cursor-pointer shadow-inner" value={newItemRole} onChange={e => setNewItemRole(e.target.value as Role)}><option value={Role.OPERATOR}>OPERARIO (Manto. Autónomo)</option><option value={Role.LEADER}>LIDER (Manto. Preventivo)</option></select></div><IndustrialButton fullWidth type="submit">Agregar al Checklist Global</IndustrialButton><hr className="border-slate-200"/><IndustrialButton fullWidth type="button" variant="ghost" onClick={onInitChecklist}>Cargar Checklist Por Defecto</IndustrialButton></form></Card><div className="lg:col-span-2"><Card><h3 className="text-xl font-black uppercase text-slate-700 border-b pb-6 mb-8">Listado de Tareas Globales</h3><div className="grid grid-cols-1 md:grid-cols-2 gap-4">{checklistItems.map(item => (<div key={item.id} className="flex justify-between items-center p-4 bg-slate-50 rounded-2xl border border-slate-100"><div><p className="font-bold text-slate-800 text-sm">{item.label}</p><span className={`text-[9px] font-black uppercase tracking-widest ${item.roleTarget === Role.LEADER ? 'text-amber-600' : 'text-orange-600'}`}>{item.roleTarget === Role.LEADER ? 'Para Líderes' : 'Para Operarios'}</span></div><button onClick={() => deleteChecklistItem(item.id)} className="p-2 text-slate-300 hover:text-red-500 transition-colors"><Trash2 className="w-4 h-4" /></button></div>))}</div></Card></div></div>)}
     </div>
   );
 };
