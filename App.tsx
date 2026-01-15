@@ -325,9 +325,9 @@ export default function App() {
       <footer className="bg-slate-900 text-slate-500 py-3 text-center text-[9px] font-bold uppercase tracking-widest fixed bottom-0 w-full z-40 hidden md:flex justify-center gap-10 border-t border-slate-800">
           <span>SGC - Top Safe S.A.</span>
           <span className="text-slate-400">|</span>
-          <span>FG-030-62O: Plan Mto. Operario</span>
+          <span>Plan integral de mantenimiento general planta</span>
           <span className="text-slate-400">|</span>
-          <span>FG-030-62R: Plan Mto. Responsable</span>
+          <span>FG-030-63: Plan Mto. Operarios y Responsable</span>
       </footer>
     </div>
   );
