@@ -4,7 +4,7 @@ import {
   MessageSquare, ClipboardList, Database, Plus, UserPlus, History, HardDrive, 
   UserCog, LayoutDashboard, X, Calendar as CalendarIcon, Filter, Trophy, Search, Lock, Fingerprint, Loader2,
   Trash2, Pencil, FileSpreadsheet, FileText, ChevronLeft, ChevronRight, Clock, Send, Download, Smartphone,
-  ListChecks, Ban, Activity, Timer, TrendingUp, Gauge, CheckSquare, Percent, Truck, Factory, FileCheck, ScanLine, Stethoscope, PauseCircle, FileBadge
+  ListChecks, Ban, Activity, Timer, TrendingUp, Gauge, CheckSquare, Percent, Truck, Factory, FileCheck, ScanLine, Stethoscope, PauseCircle, FileBadge, PlayCircle
 } from 'lucide-react';
 import { 
   PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend,
@@ -222,9 +222,7 @@ const MiniCalendar: React.FC<{ machines: ExtendedMachine[], records: Maintenance
   );
 };
 
-// ==========================================
-// VISTAS DEFINIDAS ANTES DE APP (PARA EVITAR HOISTING ERRORS)
-// ==========================================
+// --- VISTA OPERARIO (Con lógica de Vehículo "Bien/Deficiente") ---
 
 const OperatorView: React.FC<{ user: User; users: User[]; machines: ExtendedMachine[]; records: MaintenanceRecord[]; checklistItems: ChecklistItem[] }> = ({ user, users, machines, records, checklistItems }) => {
   const [selectedMachine, setSelectedMachine] = useState<ExtendedMachine | null>(null);
@@ -236,9 +234,23 @@ const OperatorView: React.FC<{ user: User; users: User[]; machines: ExtendedMach
   const [showPinModal, setShowPinModal] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
 
+  // 1. MIS MAQUINAS
   const myMachines = machines.filter(m => m.operatorId === user.id && m.status !== 'STOPPED');
-  const alertMachines = machines.filter(m => m.operatorId !== user.id && m.status !== 'STOPPED' && isPast(addDays(safeDate(m.lastOperatorDate), m.operatorInterval || 15)));
-  const otherMachines = machines.filter(m => m.operatorId !== user.id && m.status !== 'STOPPED' && !isPast(addDays(safeDate(m.lastOperatorDate), m.operatorInterval || 15)) && (m.name || '').toLowerCase().includes(searchTerm.toLowerCase()));
+
+  // 2. ALERTAS CRÍTICAS
+  const alertMachines = machines.filter(m => 
+    m.operatorId !== user.id && 
+    m.status !== 'STOPPED' &&
+    isPast(addDays(safeDate(m.lastOperatorDate), m.operatorInterval || 15))
+  );
+  
+  // 3. BUSCADOR GENERAL
+  const otherMachines = machines.filter(m => 
+    m.operatorId !== user.id && 
+    m.status !== 'STOPPED' &&
+    !isPast(addDays(safeDate(m.lastOperatorDate), m.operatorInterval || 15)) &&
+    (m.name || '').toLowerCase().includes(searchTerm.toLowerCase())
+  );
 
   const handleCheck = (itemId: string, status: string) => { setChecklistStatus(prev => { if (prev[itemId] === status) { const n = { ...prev }; delete n[itemId]; return n; } return { ...prev, [itemId]: status }; }); };
   
@@ -315,6 +327,8 @@ const OperatorView: React.FC<{ user: User; users: User[]; machines: ExtendedMach
   );
 };
 
+// --- LEADER VIEW ---
+
 const LeaderView: React.FC<{ user: User; machines: ExtendedMachine[]; records: MaintenanceRecord[]; checklistItems: ChecklistItem[] }> = ({ user, machines, records, checklistItems }) => {
   const [closingIssue, setClosingIssue] = useState<MaintenanceRecord | null>(null);
   const [closingComment, setClosingComment] = useState('');
@@ -326,8 +340,15 @@ const LeaderView: React.FC<{ user: User; machines: ExtendedMachine[]; records: M
   const [searchTerm, setSearchTerm] = useState('');
 
   const issues = records.filter(r => r.isIssue);
+  
+  // CAMBIO CLAVE 1: El Líder ve TODAS las vencidas, incluso las STOPPED.
   const heavyDutyDue = machines.filter(m => isPast(addDays(safeDate(m.lastLeaderDate), m.leaderInterval || 30)));
-  const otherMachines = machines.filter(m => !isPast(addDays(safeDate(m.lastLeaderDate), m.leaderInterval || 30)) && (m.name || '').toLowerCase().includes(searchTerm.toLowerCase()));
+
+  // CAMBIO CLAVE 2: El buscador del líder también busca en las paradas.
+  const otherMachines = machines.filter(m => 
+    !isPast(addDays(safeDate(m.lastLeaderDate), m.leaderInterval || 30)) &&
+    (m.name || '').toLowerCase().includes(searchTerm.toLowerCase())
+  );
 
   const myChecklistItems = checklistItems.filter(i => {
     if (i.roleTarget !== Role.LEADER) return false;
@@ -357,8 +378,28 @@ const LeaderView: React.FC<{ user: User; machines: ExtendedMachine[]; records: M
       <Card className="max-w-2xl mx-auto border-amber-600 shadow-amber-100/50 relative mb-20">
         <PinModal isOpen={showPinModal} onClose={() => setShowPinModal(false)} onConfirm={finalizeLeaderManto} title="Firma de Responsable Técnico" />
         <button onClick={() => setSelectedMachine(null)} className="text-[10px] font-black uppercase text-amber-700 mb-8 flex items-center gap-2 tracking-widest">← Cancelar Operación</button>
-        <div className="mb-8"><h2 className="text-4xl font-black text-slate-800 uppercase tracking-tighter flex items-center gap-3">{selectedMachine.name}{selectedMachine.status === 'STOPPED' && <span className="bg-red-100 text-red-600 text-[10px] px-3 py-1 rounded-full">PARADA</span>}</h2><div className="flex gap-2 mt-2"><span className="bg-amber-100 text-amber-800 font-bold uppercase text-[9px] px-2 py-1 rounded">{selectedMachine.assetType || 'MAQUINA'}</span><p className="text-amber-600 font-bold uppercase text-[10px] tracking-widest py-1">Protocolo Técnico Avanzado</p></div></div>
-        <div className="space-y-4 mb-8">{myChecklistItems.length === 0 && <p className="text-sm italic text-slate-400">Sin items configurados.</p>}{myChecklistItems.map((item) => (<div key={item.id} className="flex items-center justify-between p-4 rounded-2xl border-2 border-slate-100 bg-white"><span className="text-sm font-bold text-slate-700 w-1/2">{item.label}</span><div className="flex gap-2"><button onClick={() => handleCheck(item.id, 'NA')} className={`px-3 py-2 rounded-xl text-[10px] font-black transition-all ${checklistStatus[item.id] === 'NA' ? 'bg-slate-600 text-white' : 'bg-slate-100 text-slate-400 hover:bg-slate-200'}`}>N/A</button><button onClick={() => handleCheck(item.id, 'OK')} className={`px-3 py-2 rounded-xl text-[10px] font-black transition-all ${checklistStatus[item.id] === 'OK' ? 'bg-amber-600 text-white shadow-amber-200 shadow-lg' : 'bg-slate-100 text-slate-400 hover:bg-amber-100 hover:text-amber-600'}`}>HECHO</button></div></div>))}</div>
+        <div className="mb-8">
+            <h2 className="text-4xl font-black text-slate-800 uppercase tracking-tighter flex items-center gap-3">
+              {selectedMachine.name}
+              {selectedMachine.status === 'STOPPED' && <span className="bg-red-100 text-red-600 text-[10px] px-3 py-1 rounded-full">PARADA</span>}
+            </h2>
+            <div className="flex gap-2 mt-2">
+                <span className="bg-amber-100 text-amber-800 font-bold uppercase text-[9px] px-2 py-1 rounded">{selectedMachine.assetType || 'MAQUINA'}</span>
+                <p className="text-amber-600 font-bold uppercase text-[10px] tracking-widest py-1">Protocolo Técnico Avanzado</p>
+            </div>
+        </div>
+        
+        <div className="space-y-4 mb-8">
+            {myChecklistItems.map((item) => (
+                <div key={item.id} className="flex items-center justify-between p-4 rounded-2xl border-2 border-slate-100 bg-white">
+                    <span className="text-sm font-bold text-slate-700 w-1/2">{item.label}</span>
+                    <div className="flex gap-2">
+                        <button onClick={() => handleCheck(item.id, 'NA')} className={`px-3 py-2 rounded-xl text-[10px] font-black transition-all ${checklistStatus[item.id] === 'NA' ? 'bg-slate-600 text-white' : 'bg-slate-100 text-slate-400 hover:bg-slate-200'}`}>N/A</button>
+                        <button onClick={() => handleCheck(item.id, 'OK')} className={`px-3 py-2 rounded-xl text-[10px] font-black transition-all ${checklistStatus[item.id] === 'OK' ? 'bg-amber-600 text-white shadow-amber-200 shadow-lg' : 'bg-slate-100 text-slate-400 hover:bg-amber-100 hover:text-amber-600'}`}>HECHO</button>
+                    </div>
+                </div>
+            ))}
+        </div>
         <div className="mb-8"><label className="text-[10px] font-black uppercase text-slate-400 ml-2">Tiempo Parada (Min)</label><input type="number" className="w-full p-4 border-2 border-slate-100 rounded-[2rem] outline-none focus:border-amber-500 font-bold text-xl" value={downtime} onChange={e => setDowntime(parseInt(e.target.value) || 0)} /></div>
         <textarea className="w-full p-6 border-2 border-slate-100 rounded-[2rem] mb-8 h-32 outline-none focus:border-amber-600 font-medium text-lg" placeholder="Detalles técnicos..." value={mantoObs} onChange={e => setMantoObs(e.target.value)} />
         <IndustrialButton variant="secondary" fullWidth onClick={() => { if (!selectedMachine) return; setShowPinModal(true); }}>Firmar Mantenimiento Experto</IndustrialButton>
@@ -370,13 +411,83 @@ const LeaderView: React.FC<{ user: User; machines: ExtendedMachine[]; records: M
     <div className="space-y-16 relative">
       {closingIssue && (<div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4"><Card className="w-full max-w-lg animate-in fade-in zoom-in duration-200"><div className="flex justify-between items-center mb-6"><h3 className="text-2xl font-black uppercase text-slate-800">Cierre Técnico</h3><button onClick={() => setClosingIssue(null)}><X className="w-6 h-6 text-slate-400 hover:text-red-500" /></button></div><p className="text-sm font-bold text-slate-500 uppercase mb-4">Resolución de falla en: <span className="text-slate-900">{machines.find(m => m.id === closingIssue.machineId)?.name}</span></p><div className="bg-red-50 p-4 rounded-xl border border-red-100 mb-6"><p className="text-[10px] text-red-400 font-black uppercase mb-1">Reporte Original:</p><p className="text-red-800 italic font-medium">"{closingIssue.observations}"</p></div><textarea autoFocus className="w-full p-4 bg-slate-50 border-2 border-slate-200 rounded-2xl mb-6 outline-none focus:border-orange-500 font-medium" placeholder="Solución aplicada..." rows={4} value={closingComment} onChange={e => setClosingComment(e.target.value)} /><IndustrialButton fullWidth onClick={handleCloseIssue}>Confirmar Solución</IndustrialButton></Card></div>)}
       <div className="flex flex-col md:flex-row justify-between items-end gap-8"><div><h2 className="text-4xl md:text-5xl font-black text-slate-900 uppercase tracking-tighter leading-none">Resp. Mantenimiento <span className="text-orange-600">Gral.</span></h2><p className="text-slate-400 font-bold uppercase text-[10px] tracking-widest mt-3">Supervisión de Línea y Equipos Críticos</p></div><div className="w-full md:w-96"><MiniCalendar machines={machines} records={records} user={user} mode="OPERATOR" /></div></div>
-      {issues.length > 0 && (<div className="space-y-6"><h3 className="text-xl font-black text-red-600 uppercase flex items-center gap-3 animate-pulse"><AlertTriangle /> Urgencias de Planta</h3><div className="grid grid-cols-1 lg:grid-cols-2 gap-6">{issues.map(r => (<Card key={r.id} className="border-l-8 border-red-600 bg-red-50/20"><div className="flex justify-between items-start mb-4"><h4 className="text-xl font-black text-slate-800 uppercase tracking-tight">{machines.find(m => m.id === r.machineId)?.name}</h4><span className="text-[9px] font-black bg-red-600 text-white px-3 py-1 rounded-full uppercase">Falla Urgente</span></div><p className="text-slate-600 font-medium italic mb-6 leading-relaxed">"{r.observations}"</p><div className="flex justify-between items-center border-t border-red-100 pt-6"><p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Reportado: {format(safeDate(r.date), 'dd/MM HH:mm')}</p><button className="text-[10px] font-black text-orange-600 hover:text-orange-700 uppercase tracking-tighter bg-white px-4 py-2 rounded-xl shadow-sm hover:shadow-md transition-all" onClick={() => setClosingIssue(r)}>Resolver Incidencia</button></div></Card>))}</div></div>)}
-      <div className="space-y-6 pt-12 border-t border-slate-200"><h3 className="text-xl font-black text-amber-700 uppercase flex items-center gap-3"><Stethoscope /> Rondas Preventivas Vencidas (30 Días)</h3><div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6">{heavyDutyDue.map(m => (<div key={m.id} onClick={() => { setSelectedMachine(m); setChecklistStatus({}); }} className={`p-6 rounded-3xl border cursor-pointer hover:shadow-xl transition-all flex flex-col justify-between items-start group ${m.status === 'STOPPED' ? 'bg-slate-50 border-slate-200 opacity-70' : 'bg-amber-50 border-amber-200'}`}><div className="flex justify-between w-full mb-4"><div className="bg-white p-2 rounded-xl text-amber-600"><Wrench className="w-5 h-5" /></div>{m.status === 'STOPPED' ? <span className="text-[9px] bg-slate-200 text-slate-600 px-2 py-1 rounded font-bold uppercase flex items-center gap-1"><PauseCircle className="w-3 h-3"/> Parada</span> : <span className="text-[9px] bg-amber-200 text-amber-800 px-2 py-1 rounded font-bold uppercase">Pendiente</span>}</div><p className="font-black text-slate-800 uppercase tracking-tighter leading-none mb-2">{m.name}</p><p className="text-[9px] font-black text-amber-600 uppercase tracking-widest">Último: {format(safeDate(m.lastLeaderDate), 'dd/MM/yyyy')}</p></div>))}</div></div>
-      <div className="space-y-6 pt-12 border-t border-slate-200"><div className="flex flex-col md:flex-row justify-between items-end gap-4"><h3 className="text-xl font-black text-slate-800 uppercase flex items-center gap-3"><ScanLine className="text-slate-400" /> Adelantar / Buscar Equipo</h3><div className="flex items-center gap-2 p-3 bg-white rounded-xl border border-slate-200 w-full md:w-auto"><Search className="w-4 h-4 text-slate-400" /><input className="outline-none text-sm font-bold text-slate-700 bg-transparent" placeholder="Buscar equipo..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} /></div></div>{searchTerm && (<div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6 animate-in fade-in">{otherMachines.map(m => { return (<div key={m.id} onClick={() => { setSelectedMachine(m); setChecklistStatus({}); }} className="bg-white p-6 rounded-3xl border border-slate-100 cursor-pointer hover:shadow-xl transition-all flex flex-col justify-between items-start group"><div className="flex justify-between w-full mb-4"><div className="bg-slate-100 p-2 rounded-xl text-slate-500 group-hover:text-orange-600 transition-colors">{m.assetType === 'VEHICULO' ? <Truck className="w-5 h-5"/> : <HardDrive className="w-5 h-5" />}</div><span className="text-[9px] bg-emerald-100 text-emerald-600 px-2 py-1 rounded font-bold uppercase">Al Día</span></div><p className="font-black text-slate-800 uppercase tracking-tighter leading-none mb-2">{m.name}</p><p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Ciclo: {m.leaderInterval}d</p></div>); })}</div>)}</div>
+      
+      {/* 1. ALERTAS DE CAMPO (AVERIAS) */}
+      {issues.length > 0 && (
+        <div className="space-y-6">
+            <h3 className="text-xl font-black text-red-600 uppercase flex items-center gap-3 animate-pulse"><AlertTriangle /> Urgencias de Planta</h3>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                {issues.map(r => (
+                    <Card key={r.id} className="border-l-8 border-red-600 bg-red-50/20">
+                        <div className="flex justify-between items-start mb-4"><h4 className="text-xl font-black text-slate-800 uppercase tracking-tight">{machines.find(m => m.id === r.machineId)?.name}</h4><span className="text-[9px] font-black bg-red-600 text-white px-3 py-1 rounded-full uppercase">Falla Urgente</span></div>
+                        <p className="text-slate-600 font-medium italic mb-6 leading-relaxed">"{r.observations}"</p>
+                        <div className="flex justify-between items-center border-t border-red-100 pt-6">
+                            <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Reportado: {format(safeDate(r.date), 'dd/MM HH:mm')}</p>
+                            <button className="text-[10px] font-black text-orange-600 hover:text-orange-700 uppercase tracking-tighter bg-white px-4 py-2 rounded-xl shadow-sm hover:shadow-md transition-all" onClick={() => setClosingIssue(r)}>Resolver Incidencia</button>
+                        </div>
+                    </Card>
+                ))}
+            </div>
+        </div>
+      )}
+
+      {/* 2. MANTENIMIENTOS HEAVY VENCIDOS (PRIORIDAD LIDER - AHORA VE TODO) */}
+      <div className="space-y-6 pt-12 border-t border-slate-200">
+        <h3 className="text-xl font-black text-amber-700 uppercase flex items-center gap-3"><Stethoscope /> Rondas Preventivas Vencidas (30 Días)</h3>
+        {heavyDutyDue.length === 0 ? <p className="text-slate-400 italic">Todo el plan preventivo al día.</p> : (
+            <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6">
+                {heavyDutyDue.map(m => (
+                    <div key={m.id} onClick={() => { setSelectedMachine(m); setChecklistStatus({}); }} className={`p-6 rounded-3xl border cursor-pointer hover:shadow-xl transition-all flex flex-col justify-between items-start group ${m.status === 'STOPPED' ? 'bg-slate-50 border-slate-200 opacity-70' : 'bg-amber-50 border-amber-200'}`}>
+                        <div className="flex justify-between w-full mb-4">
+                            <div className="bg-white p-2 rounded-xl text-amber-600"><Wrench className="w-5 h-5" /></div>
+                            {/* CAMBIO VISUAL: SI ESTÁ PARADA, AVISA */}
+                            {m.status === 'STOPPED' 
+                                ? <span className="text-[9px] bg-slate-200 text-slate-600 px-2 py-1 rounded font-bold uppercase flex items-center gap-1"><PauseCircle className="w-3 h-3"/> Parada</span>
+                                : <span className="text-[9px] bg-amber-200 text-amber-800 px-2 py-1 rounded font-bold uppercase">Pendiente</span>
+                            }
+                        </div>
+                        <p className="font-black text-slate-800 uppercase tracking-tighter leading-none mb-2">{m.name}</p>
+                        <p className="text-[9px] font-black text-amber-600 uppercase tracking-widest">Último: {format(safeDate(m.lastLeaderDate), 'dd/MM/yyyy')}</p>
+                    </div>
+                ))}
+            </div>
+        )}
+      </div>
+
+      {/* 3. BUSCADOR GENERAL */}
+      <div className="space-y-6 pt-12 border-t border-slate-200">
+          <div className="flex flex-col md:flex-row justify-between items-end gap-4">
+              <h3 className="text-xl font-black text-slate-800 uppercase flex items-center gap-3"><ScanLine className="text-slate-400" /> Adelantar / Buscar Equipo</h3>
+              <div className="flex items-center gap-2 p-3 bg-white rounded-xl border border-slate-200 w-full md:w-auto">
+                <Search className="w-4 h-4 text-slate-400" />
+                <input className="outline-none text-sm font-bold text-slate-700 bg-transparent" placeholder="Buscar equipo..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
+              </div>
+          </div>
+          
+          {searchTerm && (
+              <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6 animate-in fade-in">
+                  {otherMachines.map(m => {
+                      return (
+                          <div key={m.id} onClick={() => { setSelectedMachine(m); setChecklistStatus({}); }} className="bg-white p-6 rounded-3xl border border-slate-100 cursor-pointer hover:shadow-xl transition-all flex flex-col justify-between items-start group">
+                              <div className="flex justify-between w-full mb-4">
+                                  <div className="bg-slate-100 p-2 rounded-xl text-slate-500 group-hover:text-orange-600 transition-colors">
+                                      {m.assetType === 'VEHICULO' ? <Truck className="w-5 h-5"/> : <HardDrive className="w-5 h-5" />}
+                                  </div>
+                                  <span className="text-[9px] bg-emerald-100 text-emerald-600 px-2 py-1 rounded font-bold uppercase">Al Día</span>
+                              </div>
+                              <p className="font-black text-slate-800 uppercase tracking-tighter leading-none mb-2">{m.name}</p>
+                              <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Ciclo: {m.leaderInterval}d</p>
+                          </div>
+                      );
+                  })}
+              </div>
+          )}
+      </div>
     </div>
   );
 };
 
+// --- MANAGER VIEW ---
 const ManagerView: React.FC<{ users: User[]; machines: ExtendedMachine[]; records: MaintenanceRecord[]; checklistItems: ChecklistItem[]; onInitChecklist: () => void }> = ({ users, machines, records, checklistItems, onInitChecklist }) => {
   const [activePanel, setActivePanel] = useState<'STATS' | 'HISTORY' | 'MACHINES' | 'USERS' | 'CONFIG'>('STATS');
   const [userForm, setUserForm] = useState({ name: '', phone: '', role: Role.OPERATOR, pin: '1234' });
@@ -498,7 +609,7 @@ const ManagerView: React.FC<{ users: User[]; machines: ExtendedMachine[]; record
 
     if (editingMachineId) {
       await updateDoc(doc(db, "machines", editingMachineId), data);
-      alert("Máquina actualizada y reloj reiniciado.");
+      alert("Máquina actualizada y reloj reiniciado a la fecha seleccionada.");
       setEditingMachineId(null);
     } else {
       await addDoc(collection(db, "machines"), data); 
@@ -515,9 +626,10 @@ const ManagerView: React.FC<{ users: User[]; machines: ExtendedMachine[]; record
           leaderInterval: m.leaderInterval, 
           operatorId: m.operatorId || '', 
           leaderId: m.leaderId || '', 
+          // FIX: Carga la fecha actual de la máquina o usa hoy si no tiene
           baseDate: m.lastOperatorDate ? m.lastOperatorDate.slice(0, 10) : new Date().toISOString().slice(0, 10), 
           assetType: m.assetType || 'MAQUINA',
-          status: m.status || 'ACTIVE' // CARGAR ESTADO
+          status: m.status || 'ACTIVE' 
       } as any); 
       window.scrollTo({ top: 0, behavior: 'smooth' }); 
   };
@@ -583,7 +695,6 @@ const ManagerView: React.FC<{ users: User[]; machines: ExtendedMachine[]; record
       
       {activePanel === 'STATS' && (<div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
         
-        {/* FILTRO GLOBAL */}
         <div className="bg-slate-800 p-4 rounded-2xl flex justify-between items-center">
             <h3 className="text-white font-bold uppercase text-sm flex items-center gap-2"><Filter className="w-4 h-4 text-orange-500"/> Filtro de Planta:</h3>
             <select className="bg-slate-700 text-white font-bold p-2 rounded-xl outline-none border border-slate-600" value={selectedMachineId} onChange={e => setSelectedMachineId(e.target.value)}>
@@ -592,7 +703,6 @@ const ManagerView: React.FC<{ users: User[]; machines: ExtendedMachine[]; record
             </select>
         </div>
 
-        {/* KPI CARDS */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
             <Card className="bg-slate-900 text-white border-none"><div className="flex items-center gap-3 mb-2"><HardDrive className="text-orange-500 w-5 h-5" /><span className="text-[10px] font-black uppercase tracking-widest opacity-70">Activos en Uso</span></div><p className="text-4xl font-black">{kpiData.totalAssets}</p></Card>
             <Card className="bg-white border-emerald-100"><div className="flex items-center gap-3 mb-2"><Activity className="text-emerald-500 w-5 h-5" /><span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Cumplimiento (Plan)</span></div><p className="text-4xl font-black text-emerald-600">{kpiData.complianceRate}%</p></Card>
@@ -600,7 +710,6 @@ const ManagerView: React.FC<{ users: User[]; machines: ExtendedMachine[]; record
             <Card className="bg-white border-blue-100"><div className="flex items-center gap-3 mb-2"><Gauge className="text-blue-500 w-5 h-5" /><span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Eficiencia (OEE)</span></div><p className="text-4xl font-black text-blue-600">{kpiData.efficiency}%</p></Card>
         </div>
 
-        {/* GRAFICO PIE Y TENDENCIAS */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
             <Card className="flex flex-col items-center justify-center">
                 <h3 className="text-lg font-black uppercase text-slate-700 w-full text-center mb-4">Salud del Parque</h3>
@@ -667,10 +776,3 @@ const ManagerView: React.FC<{ users: User[]; machines: ExtendedMachine[]; record
     </div>
   );
 };
-
-export default function App() {
-  // ... Código anterior del App ... 
-  // (Este bloque se volvió redundante con el App completo de arriba.
-  // IMPORTANTE: NO COPIES ESTE PEDACITO. COPIA TODO EL ARCHIVO DESDE ARRIBA.
-  // LA FUNCION APP YA ESTA INCLUIDA EN EL BLOQUE GRANDE ARRIBA Y MOVIDA AL FINAL)
-}
