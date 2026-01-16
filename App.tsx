@@ -204,7 +204,6 @@ const MiniCalendar: React.FC<{ machines: ExtendedMachine[], records: Maintenance
   );
 };
 
-
 // --- MAIN APP ---
 
 export default function App() {
@@ -332,7 +331,7 @@ export default function App() {
   );
 }
 
-// --- VIEWS ---
+// --- VISTA OPERARIO MODIFICADA PARA REFLEJAR "LA HOJA PEGADA" ---
 
 const OperatorView: React.FC<{ user: User; machines: ExtendedMachine[]; records: MaintenanceRecord[]; checklistItems: ChecklistItem[] }> = ({ user, machines, records, checklistItems }) => {
   const [selectedMachine, setSelectedMachine] = useState<ExtendedMachine | null>(null);
@@ -341,20 +340,27 @@ const OperatorView: React.FC<{ user: User; machines: ExtendedMachine[]; records:
   const [downtime, setDowntime] = useState(0);
   const [isCritical, setIsCritical] = useState(false);
   const [showPinModal, setShowPinModal] = useState(false);
-  const [searchTerm, setSearchTerm] = useState(''); // BUSCADOR
+  const [searchTerm, setSearchTerm] = useState('');
 
-  // 1. MIS MAQUINAS (Donde soy el dueño)
+  // 1. MIS MAQUINAS (Donde soy el dueño titular)
   const myMachines = machines.filter(m => m.operatorId === user.id);
+
+  // 2. ALERTAS CRÍTICAS (La "hoja de papel" roja): Cualquier maquina vencida que NO sea mia
+  const alertMachines = machines.filter(m => 
+    m.operatorId !== user.id && 
+    isPast(addDays(parseISO(m.lastOperatorDate), m.operatorInterval))
+  );
   
-  // 2. BUSCADOR GENERAL (Permite encontrar CUALQUIER otra máquina para trabajar)
+  // 3. BUSCADOR GENERAL (El resto, para mantenimientos adelantados o no vencidos)
+  // Filtramos: Que no sea mia Y que no esté ya en la lista de alertas (para no duplicar)
   const otherMachines = machines.filter(m => 
     m.operatorId !== user.id && 
+    !isPast(addDays(parseISO(m.lastOperatorDate), m.operatorInterval)) &&
     m.name.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   const handleCheck = (itemId: string, status: string) => { setChecklistStatus(prev => { if (prev[itemId] === status) { const n = { ...prev }; delete n[itemId]; return n; } return { ...prev, [itemId]: status }; }); };
   
-  // Filtramos el checklist segun la maquina seleccionada
   const myChecklistItems = checklistItems.filter(i => 
     i.roleTarget === Role.OPERATOR && 
     (i.targetType === 'ALL' || i.targetType === selectedMachine?.assetType)
@@ -432,7 +438,27 @@ const OperatorView: React.FC<{ user: User; machines: ExtendedMachine[]; records:
         </div>
       )}
 
-      {/* SECCION 2: BUSCADOR PARA CUALQUIER MAQUINA (ROTACION) */}
+      {/* SECCION 2: ALERTAS DE PLANTA (LA HOJA DE PAPEL DIGITAL) */}
+      {alertMachines.length > 0 && (
+        <div className="space-y-6 pt-12 border-t border-slate-200">
+             <h3 className="text-xl font-black text-red-600 uppercase flex items-center gap-3 animate-pulse"><AlertTriangle /> Mantenimiento Vencido (General)</h3>
+             <p className="text-xs text-slate-500 mb-4">Estos equipos necesitan atención urgente. Si estás usándolos, realiza el mantenimiento.</p>
+             <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6">
+                {alertMachines.map(m => (
+                    <div key={m.id} onClick={() => { setSelectedMachine(m); setChecklistStatus({}); }} className="bg-red-50 p-6 rounded-3xl border border-red-200 cursor-pointer hover:shadow-xl transition-all flex flex-col justify-between items-start group">
+                        <div className="flex justify-between w-full mb-4">
+                            <div className="bg-white p-2 rounded-xl text-red-500"><Wrench className="w-5 h-5" /></div>
+                            <span className="text-[9px] bg-red-200 text-red-800 px-2 py-1 rounded font-bold uppercase">Vencido</span>
+                        </div>
+                        <p className="font-black text-slate-800 uppercase tracking-tighter leading-none mb-2">{m.name}</p>
+                        <p className="text-[9px] font-black text-red-400 uppercase tracking-widest">Resp: {users.find(u => u.id === m.operatorId)?.name || 'Sin Asignar'}</p>
+                    </div>
+                ))}
+             </div>
+        </div>
+      )}
+
+      {/* SECCION 3: BUSCADOR GENERAL (RESTO DE EQUIPOS AL DIA) */}
       <div className="space-y-6 pt-12 border-t border-slate-200">
           <div className="flex flex-col md:flex-row justify-between items-end gap-4">
               <h3 className="text-xl font-black text-slate-800 uppercase flex items-center gap-3"><ScanLine className="text-slate-400" /> Operar Otro Equipo</h3>
@@ -445,21 +471,20 @@ const OperatorView: React.FC<{ user: User; machines: ExtendedMachine[]; records:
           {searchTerm && (
               <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6 animate-in fade-in">
                   {otherMachines.map(m => {
-                      const isDue = isPast(addDays(parseISO(m.lastOperatorDate), m.operatorInterval));
                       return (
-                          <div key={m.id} onClick={() => { setSelectedMachine(m); setChecklistStatus({}); }} className={`bg-white p-6 rounded-3xl border cursor-pointer hover:shadow-xl transition-all flex flex-col justify-between items-start group ${isDue ? 'border-red-200 bg-red-50/10' : 'border-slate-100'}`}>
+                          <div key={m.id} onClick={() => { setSelectedMachine(m); setChecklistStatus({}); }} className="bg-white p-6 rounded-3xl border border-slate-100 cursor-pointer hover:shadow-xl transition-all flex flex-col justify-between items-start group">
                               <div className="flex justify-between w-full mb-4">
                                   <div className="bg-slate-100 p-2 rounded-xl text-slate-500 group-hover:text-orange-600 transition-colors">
                                       {m.assetType === 'VEHICULO' ? <Truck className="w-5 h-5"/> : <HardDrive className="w-5 h-5" />}
                                   </div>
-                                  <span className="text-[9px] bg-slate-200 px-2 py-1 rounded font-bold uppercase text-slate-500">Visitante</span>
+                                  <span className="text-[9px] bg-emerald-100 text-emerald-600 px-2 py-1 rounded font-bold uppercase">Al Día</span>
                               </div>
                               <p className="font-black text-slate-800 uppercase tracking-tighter leading-none mb-2">{m.name}</p>
                               <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Ciclo: {m.operatorInterval}d</p>
                           </div>
                       );
                   })}
-                  {otherMachines.length === 0 && <p className="text-slate-400 text-sm italic col-span-full">No se encontraron equipos con ese nombre.</p>}
+                  {otherMachines.length === 0 && <p className="text-slate-400 text-sm italic col-span-full">No se encontraron equipos disponibles con ese nombre.</p>}
               </div>
           )}
       </div>
@@ -467,7 +492,8 @@ const OperatorView: React.FC<{ user: User; machines: ExtendedMachine[]; records:
   );
 };
 
-// ... LeaderView y ManagerView se mantienen igual (copiar del bloque anterior) ...
+// ... LeaderView y ManagerView IGUALES AL ANTERIOR ...
+// (Copia y pega LeaderView y ManagerView del código anterior para completar el archivo)
 const LeaderView: React.FC<{ user: User; machines: ExtendedMachine[]; records: MaintenanceRecord[]; checklistItems: ChecklistItem[] }> = ({ user, machines, records, checklistItems }) => {
   const [closingIssue, setClosingIssue] = useState<MaintenanceRecord | null>(null);
   const [closingComment, setClosingComment] = useState('');
