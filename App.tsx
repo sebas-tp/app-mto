@@ -4,7 +4,7 @@ import {
   MessageSquare, ClipboardList, Database, Plus, UserPlus, History, HardDrive, 
   UserCog, LayoutDashboard, X, Calendar as CalendarIcon, Filter, Trophy, Search, Lock, Fingerprint, Loader2,
   Trash2, Pencil, FileSpreadsheet, FileText, ChevronLeft, ChevronRight, Clock, Send, Download, Smartphone,
-  ListChecks, Ban, Activity, Timer, TrendingUp, Gauge, CheckSquare, Percent, Truck, Factory, FileCheck, ScanLine, Stethoscope, PauseCircle, FileBadge, PlayCircle
+  ListChecks, Ban, Activity, Timer, TrendingUp, Gauge, CheckSquare, Percent, Truck, Factory, FileCheck, ScanLine, Stethoscope, PauseCircle, FileBadge
 } from 'lucide-react';
 import { 
   PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend,
@@ -222,7 +222,9 @@ const MiniCalendar: React.FC<{ machines: ExtendedMachine[], records: Maintenance
   );
 };
 
-// --- VISTA OPERARIO (Con lógica de Vehículo "Bien/Deficiente") ---
+// ==========================================
+// VISTAS DEFINIDAS ANTES DE APP (PARA EVITAR HOISTING ERRORS)
+// ==========================================
 
 const OperatorView: React.FC<{ user: User; users: User[]; machines: ExtendedMachine[]; records: MaintenanceRecord[]; checklistItems: ChecklistItem[] }> = ({ user, users, machines, records, checklistItems }) => {
   const [selectedMachine, setSelectedMachine] = useState<ExtendedMachine | null>(null);
@@ -313,8 +315,6 @@ const OperatorView: React.FC<{ user: User; users: User[]; machines: ExtendedMach
   );
 };
 
-// --- LEADER VIEW ---
-
 const LeaderView: React.FC<{ user: User; machines: ExtendedMachine[]; records: MaintenanceRecord[]; checklistItems: ChecklistItem[] }> = ({ user, machines, records, checklistItems }) => {
   const [closingIssue, setClosingIssue] = useState<MaintenanceRecord | null>(null);
   const [closingComment, setClosingComment] = useState('');
@@ -377,7 +377,6 @@ const LeaderView: React.FC<{ user: User; machines: ExtendedMachine[]; records: M
   );
 };
 
-// --- MANAGER VIEW ---
 const ManagerView: React.FC<{ users: User[]; machines: ExtendedMachine[]; records: MaintenanceRecord[]; checklistItems: ChecklistItem[]; onInitChecklist: () => void }> = ({ users, machines, records, checklistItems, onInitChecklist }) => {
   const [activePanel, setActivePanel] = useState<'STATS' | 'HISTORY' | 'MACHINES' | 'USERS' | 'CONFIG'>('STATS');
   const [userForm, setUserForm] = useState({ name: '', phone: '', role: Role.OPERATOR, pin: '1234' });
@@ -668,3 +667,10 @@ const ManagerView: React.FC<{ users: User[]; machines: ExtendedMachine[]; record
     </div>
   );
 };
+
+export default function App() {
+  // ... Código anterior del App ... 
+  // (Este bloque se volvió redundante con el App completo de arriba.
+  // IMPORTANTE: NO COPIES ESTE PEDACITO. COPIA TODO EL ARCHIVO DESDE ARRIBA.
+  // LA FUNCION APP YA ESTA INCLUIDA EN EL BLOQUE GRANDE ARRIBA Y MOVIDA AL FINAL)
+}
