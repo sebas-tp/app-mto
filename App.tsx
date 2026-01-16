@@ -765,15 +765,26 @@ const ManagerView: React.FC<{ users: User[]; machines: ExtendedMachine[]; record
   const handleMachineSubmit = async (e: React.FormEvent) => { 
     e.preventDefault(); 
     const baseDate = new Date(machineForm.baseDate).toISOString();
+    
     const data: any = { 
-        name: machineForm.name, operatorInterval: machineForm.operatorInterval, leaderInterval: machineForm.leaderInterval, 
-        operatorId: machineForm.operatorId || null, leaderId: machineForm.leaderId || null, assetType: machineForm.assetType 
+        name: machineForm.name, 
+        operatorInterval: machineForm.operatorInterval, 
+        leaderInterval: machineForm.leaderInterval, 
+        operatorId: machineForm.operatorId || null, 
+        leaderId: machineForm.leaderId || null, 
+        assetType: machineForm.assetType,
+        // ESTO ES LO NUEVO: Forzamos la fecha base también al editar
+        lastOperatorDate: baseDate, 
+        lastLeaderDate: baseDate 
     };
+
     if (editingMachineId) {
       await updateDoc(doc(db, "machines", editingMachineId), data);
+      alert("Máquina actualizada y reloj reiniciado a la fecha seleccionada.");
       setEditingMachineId(null);
     } else {
-      await addDoc(collection(db, "machines"), { ...data, lastOperatorDate: baseDate, lastLeaderDate: baseDate }); 
+      await addDoc(collection(db, "machines"), data); 
+      alert("Máquina creada correctamente.");
     }
     setMachineForm({ name: '', operatorInterval: 15, leaderInterval: 30, operatorId: '', leaderId: '', baseDate: new Date().toISOString().slice(0, 10), assetType: 'MAQUINA' } as any); 
   };
