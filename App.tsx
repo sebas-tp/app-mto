@@ -522,6 +522,8 @@ const OperatorView: React.FC<{ user: User; users: User[]; machines: ExtendedMach
 
 // --- LEADER VIEW ---
 
+// --- LEADER VIEW (MODIFICADA: VE TODO, INCLUSO LO PARADO) ---
+
 const LeaderView: React.FC<{ user: User; machines: ExtendedMachine[]; records: MaintenanceRecord[]; checklistItems: ChecklistItem[] }> = ({ user, machines, records, checklistItems }) => {
   const [closingIssue, setClosingIssue] = useState<MaintenanceRecord | null>(null);
   const [closingComment, setClosingComment] = useState('');
@@ -530,15 +532,16 @@ const LeaderView: React.FC<{ user: User; machines: ExtendedMachine[]; records: M
   const [mantoObs, setMantoObs] = useState('');
   const [downtime, setDowntime] = useState(0);
   const [showPinModal, setShowPinModal] = useState(false);
-  const [searchTerm, setSearchTerm] = useState(''); // CORREGIDO: VARIABLE DECLARADA
+  const [searchTerm, setSearchTerm] = useState('');
 
   const issues = records.filter(r => r.isIssue);
   
-  // FILTRADO DE STOPPED MACHINES PARA EL LIDER
-  const heavyDutyDue = machines.filter(m => m.status !== 'STOPPED' && isPast(addDays(safeDate(m.lastLeaderDate), m.leaderInterval || 30)));
+  // CAMBIO CLAVE 1: El Líder ve TODAS las vencidas, incluso las STOPPED.
+  // (Quitamos el filtro m.status !== 'STOPPED')
+  const heavyDutyDue = machines.filter(m => isPast(addDays(safeDate(m.lastLeaderDate), m.leaderInterval || 30)));
 
+  // CAMBIO CLAVE 2: El buscador del líder también busca en las paradas.
   const otherMachines = machines.filter(m => 
-    m.status !== 'STOPPED' &&
     !isPast(addDays(safeDate(m.lastLeaderDate), m.leaderInterval || 30)) &&
     (m.name || '').toLowerCase().includes(searchTerm.toLowerCase())
   );
@@ -572,7 +575,10 @@ const LeaderView: React.FC<{ user: User; machines: ExtendedMachine[]; records: M
         <PinModal isOpen={showPinModal} onClose={() => setShowPinModal(false)} onConfirm={finalizeLeaderManto} title="Firma de Responsable Técnico" />
         <button onClick={() => setSelectedMachine(null)} className="text-[10px] font-black uppercase text-amber-700 mb-8 flex items-center gap-2 tracking-widest">← Cancelar Operación</button>
         <div className="mb-8">
-            <h2 className="text-4xl font-black text-slate-800 uppercase tracking-tighter">{selectedMachine.name}</h2>
+            <h2 className="text-4xl font-black text-slate-800 uppercase tracking-tighter flex items-center gap-3">
+              {selectedMachine.name}
+              {selectedMachine.status === 'STOPPED' && <span className="bg-red-100 text-red-600 text-[10px] px-3 py-1 rounded-full">PARADA</span>}
+            </h2>
             <div className="flex gap-2 mt-2">
                 <span className="bg-amber-100 text-amber-800 font-bold uppercase text-[9px] px-2 py-1 rounded">{selectedMachine.assetType || 'MAQUINA'}</span>
                 <p className="text-amber-600 font-bold uppercase text-[10px] tracking-widest py-1">Protocolo Técnico Avanzado</p>
@@ -621,21 +627,27 @@ const LeaderView: React.FC<{ user: User; machines: ExtendedMachine[]; records: M
         </div>
       )}
 
-      {/* 2. MANTENIMIENTOS HEAVY VENCIDOS */}
+      {/* 2. MANTENIMIENTOS HEAVY VENCIDOS (PRIORIDAD LIDER - AHORA VE TODO) */}
       <div className="space-y-6 pt-12 border-t border-slate-200">
         <h3 className="text-xl font-black text-amber-700 uppercase flex items-center gap-3"><Stethoscope /> Rondas Preventivas Vencidas (30 Días)</h3>
-        <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6">
-            {heavyDutyDue.map(m => (
-                <div key={m.id} onClick={() => { setSelectedMachine(m); setChecklistStatus({}); }} className="bg-amber-50 p-6 rounded-3xl border border-amber-200 cursor-pointer hover:shadow-xl transition-all flex flex-col justify-between items-start group">
-                    <div className="flex justify-between w-full mb-4">
-                        <div className="bg-white p-2 rounded-xl text-amber-600"><Wrench className="w-5 h-5" /></div>
-                        <span className="text-[9px] bg-amber-200 text-amber-800 px-2 py-1 rounded font-bold uppercase">Pendiente</span>
+        {heavyDutyDue.length === 0 ? <p className="text-slate-400 italic">Todo el plan preventivo al día.</p> : (
+            <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6">
+                {heavyDutyDue.map(m => (
+                    <div key={m.id} onClick={() => { setSelectedMachine(m); setChecklistStatus({}); }} className={`p-6 rounded-3xl border cursor-pointer hover:shadow-xl transition-all flex flex-col justify-between items-start group ${m.status === 'STOPPED' ? 'bg-slate-50 border-slate-200 opacity-70' : 'bg-amber-50 border-amber-200'}`}>
+                        <div className="flex justify-between w-full mb-4">
+                            <div className="bg-white p-2 rounded-xl text-amber-600"><Wrench className="w-5 h-5" /></div>
+                            {/* CAMBIO VISUAL: SI ESTÁ PARADA, AVISA */}
+                            {m.status === 'STOPPED' 
+                                ? <span className="text-[9px] bg-slate-200 text-slate-600 px-2 py-1 rounded font-bold uppercase flex items-center gap-1"><PauseCircle className="w-3 h-3"/> Parada</span>
+                                : <span className="text-[9px] bg-amber-200 text-amber-800 px-2 py-1 rounded font-bold uppercase">Pendiente</span>
+                            }
+                        </div>
+                        <p className="font-black text-slate-800 uppercase tracking-tighter leading-none mb-2">{m.name}</p>
+                        <p className="text-[9px] font-black text-amber-600 uppercase tracking-widest">Último: {format(safeDate(m.lastLeaderDate), 'dd/MM/yyyy')}</p>
                     </div>
-                    <p className="font-black text-slate-800 uppercase tracking-tighter leading-none mb-2">{m.name}</p>
-                    <p className="text-[9px] font-black text-amber-600 uppercase tracking-widest">Último: {format(safeDate(m.lastLeaderDate), 'dd/MM/yyyy')}</p>
-                </div>
-            ))}
-        </div>
+                ))}
+            </div>
+        )}
       </div>
 
       {/* 3. BUSCADOR GENERAL */}
