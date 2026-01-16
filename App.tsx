@@ -359,7 +359,7 @@ const OperatorView: React.FC<{ user: User; users: User[]; machines: ExtendedMach
   // 1. MIS MAQUINAS
   const myMachines = machines.filter(m => m.operatorId === user.id);
 
-  // 2. ALERTAS CRÍTICAS
+  // 2. ALERTAS CRÍTICAS (La "hoja de papel" roja) - PROTEGIDA CON safeDate y user check
   const alertMachines = machines.filter(m => 
     m.operatorId !== user.id && 
     isPast(addDays(safeDate(m.lastOperatorDate), m.operatorInterval || 15))
@@ -374,10 +374,16 @@ const OperatorView: React.FC<{ user: User; users: User[]; machines: ExtendedMach
 
   const handleCheck = (itemId: string, status: string) => { setChecklistStatus(prev => { if (prev[itemId] === status) { const n = { ...prev }; delete n[itemId]; return n; } return { ...prev, [itemId]: status }; }); };
   
+  // FILTRADO INTELIGENTE DE CHECKLIST: COMPATIBILIDAD V6.0
   const myChecklistItems = checklistItems.filter(i => {
     if (i.roleTarget !== Role.OPERATOR) return false;
+    
+    // Si la máquina tiene tipo (nuevo) se usa, si no (viejo) es MAQUINA
     const currentMachineType = selectedMachine?.assetType || 'MAQUINA';
+    
+    // Si el item tiene tipo (nuevo) se usa, si no (viejo) es ALL (Global)
     const itemTarget = i.targetType || 'ALL';
+
     return itemTarget === 'ALL' || itemTarget === currentMachineType;
   });
 
@@ -521,7 +527,7 @@ const LeaderView: React.FC<{ user: User; machines: ExtendedMachine[]; records: M
   const [mantoObs, setMantoObs] = useState('');
   const [downtime, setDowntime] = useState(0);
   const [showPinModal, setShowPinModal] = useState(false);
-  const [searchTerm, setSearchTerm] = useState('');
+  const [searchTerm, setSearchTerm] = useState(''); // Variable que faltaba
 
   const issues = records.filter(r => r.isIssue);
   
@@ -532,6 +538,7 @@ const LeaderView: React.FC<{ user: User; machines: ExtendedMachine[]; records: M
     (m.name || '').toLowerCase().includes(searchTerm.toLowerCase())
   );
 
+  // LOGICA COMPATIBLE PARA CHECKLIST DE LIDER
   const myChecklistItems = checklistItems.filter(i => {
     if (i.roleTarget !== Role.LEADER) return false;
     const currentMachineType = selectedMachine?.assetType || 'MAQUINA';
@@ -773,7 +780,7 @@ const ManagerView: React.FC<{ users: User[]; machines: ExtendedMachine[]; record
         operatorId: machineForm.operatorId || null, 
         leaderId: machineForm.leaderId || null, 
         assetType: machineForm.assetType,
-        // ESTO ES LO NUEVO: Forzamos la fecha base también al editar
+        // ESTO ES LO NUEVO: Forzamos la fecha base también al editar para DEMO
         lastOperatorDate: baseDate, 
         lastLeaderDate: baseDate 
     };
@@ -789,7 +796,21 @@ const ManagerView: React.FC<{ users: User[]; machines: ExtendedMachine[]; record
     setMachineForm({ name: '', operatorInterval: 15, leaderInterval: 30, operatorId: '', leaderId: '', baseDate: new Date().toISOString().slice(0, 10), assetType: 'MAQUINA' } as any); 
   };
 
-  const handleEditMachine = (m: ExtendedMachine) => { setEditingMachineId(m.id); setMachineForm({ name: m.name, operatorInterval: m.operatorInterval, leaderInterval: m.leaderInterval, operatorId: m.operatorId || '', leaderId: m.leaderId || '', baseDate: m.lastOperatorDate.slice(0, 10), assetType: m.assetType || 'MAQUINA' } as any); window.scrollTo({ top: 0, behavior: 'smooth' }); };
+  const handleEditMachine = (m: ExtendedMachine) => { 
+      setEditingMachineId(m.id); 
+      setMachineForm({ 
+          name: m.name, 
+          operatorInterval: m.operatorInterval, 
+          leaderInterval: m.leaderInterval, 
+          operatorId: m.operatorId || '', 
+          leaderId: m.leaderId || '', 
+          // FIX: Carga la fecha actual de la máquina o usa hoy si no tiene
+          baseDate: m.lastOperatorDate ? m.lastOperatorDate.slice(0, 10) : new Date().toISOString().slice(0, 10), 
+          assetType: m.assetType || 'MAQUINA' 
+      } as any); 
+      window.scrollTo({ top: 0, behavior: 'smooth' }); 
+  };
+
   const handleDeleteMachine = async (id: string) => { if(!window.confirm("¿Eliminar?")) return; await deleteDoc(doc(db, "machines", id)); };
   const updateMachineOwner = async (machineId: string, val: string) => { await updateDoc(doc(db, "machines", machineId), { assignedTo: val === "none" ? null : val }); };
   const updateUserRole = async (userId: string, newRole: Role) => { await updateDoc(doc(db, "users", userId), { role: newRole }); };
@@ -827,7 +848,6 @@ const ManagerView: React.FC<{ users: User[]; machines: ExtendedMachine[]; record
                 <div className="space-y-4">
                     <div className="flex justify-between items-center p-4 bg-slate-50 rounded-2xl">
                         <span className="text-sm font-bold text-slate-600">Responsable</span>
-                        {/* SAFE USER LOOKUP - EVITA CRASH SI USUARIO FUE BORRADO */}
                         <span className="text-sm font-black text-slate-900 uppercase">{(users.find(u => u.id === viewRecord.userId)?.name) || 'Desconocido'}</span>
                     </div>
                     <div className="flex justify-between items-center p-4 bg-slate-50 rounded-2xl">
@@ -945,11 +965,7 @@ const ManagerView: React.FC<{ users: User[]; machines: ExtendedMachine[]; record
       </div>)}
       
       {/* ... (RESTO DE PANELES SIN CAMBIOS) ... */}
-      {/* ... Copia y pega HISTORY, MACHINES, USERS, CONFIG tal cual estaban ... */}
-      {/* (Para ahorrar espacio asumo que los tienes del mensaje anterior) */}
-      
       {activePanel === 'HISTORY' && (<div className="space-y-8 animate-in fade-in zoom-in duration-300"><Card className="bg-slate-900 text-white border-none shadow-2xl shadow-slate-400/20 no-print"><div className="flex flex-col md:flex-row gap-6 items-end"><div className="w-full md:w-1/4 space-y-2"><label className="text-[10px] font-black uppercase text-slate-400 flex gap-2"><CalendarIcon className="w-3 h-3"/> Desde</label><input type="date" className="w-full bg-slate-800 border border-slate-700 rounded-xl p-3 text-sm font-bold outline-none focus:border-orange-500 text-white" value={historyFilter.dateFrom} onChange={e => setHistoryFilter({...historyFilter, dateFrom: e.target.value})} /></div><div className="w-full md:w-1/4 space-y-2"><label className="text-[10px] font-black uppercase text-slate-400 flex gap-2"><CalendarIcon className="w-3 h-3"/> Hasta</label><input type="date" className="w-full bg-slate-800 border border-slate-700 rounded-xl p-3 text-sm font-bold outline-none focus:border-orange-500 text-white" value={historyFilter.dateTo} onChange={e => setHistoryFilter({...historyFilter, dateTo: e.target.value})} /></div><div className="w-full md:w-1/4 space-y-2"><label className="text-[10px] font-black uppercase text-slate-400 flex gap-2"><UserCog className="w-3 h-3"/> Empleado</label><select className="w-full bg-slate-800 border border-slate-700 rounded-xl p-3 text-sm font-bold outline-none focus:border-orange-500 text-white cursor-pointer appearance-none" value={historyFilter.userId} onChange={e => setHistoryFilter({...historyFilter, userId: e.target.value})}><option value="ALL">Todos los Usuarios</option>{users.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}</select></div><div className="w-full md:w-1/4 space-y-2"><label className="text-[10px] font-black uppercase text-slate-400 flex gap-2"><Filter className="w-3 h-3"/> Tipo Registro</label><select className="w-full bg-slate-800 border border-slate-700 rounded-xl p-3 text-sm font-bold outline-none focus:border-orange-500 text-white cursor-pointer appearance-none" value={historyFilter.type} onChange={e => setHistoryFilter({...historyFilter, type: e.target.value})}><option value="ALL">Todo</option><option value="MANTO">Mantenimientos</option><option value="ISSUE">Fallas</option></select></div></div></Card><div className="flex gap-4 justify-end no-print"><IndustrialButton onClick={exportToCSV} variant="success"><FileSpreadsheet className="w-4 h-4"/> Exportar Excel (CSV)</IndustrialButton><IndustrialButton onClick={handlePrint} variant="dark"><FileText className="w-4 h-4"/> Imprimir Reporte PDF</IndustrialButton></div><Card className="p-0 overflow-hidden border-orange-100 print:shadow-none print:border-none"><div className="p-6 hidden print:block"><h1 className="text-3xl font-black uppercase">Reporte de Auditoría TPM</h1><p className="text-sm text-slate-500">Generado el: {format(new Date(), 'dd/MM/yyyy HH:mm')}</p></div><div className="overflow-x-auto"><table className="w-full text-left border-collapse"><thead className="bg-orange-50 text-orange-900 text-[10px] font-black uppercase tracking-widest print:bg-slate-200 print:text-slate-900"><tr><th className="p-6">Fecha</th><th className="p-6">Máquina</th><th className="p-6">Responsable</th><th className="p-6">Detalle</th><th className="p-6 text-center">Tipo</th><th className="p-6 text-center">Acciones</th></tr></thead><tbody className="text-xs font-medium text-slate-600">{filteredRecords.length > 0 ? filteredRecords.map(r => { 
-                // SAFE LOOKUP
                 const user = users.find(u => u.id === r.userId); 
                 const machine = machines.find(m => m.id === r.machineId); 
                 return (
@@ -963,61 +979,9 @@ const ManagerView: React.FC<{ users: User[]; machines: ExtendedMachine[]; record
                     </tr>
                 ); 
             }) : <tr><td colSpan={6} className="p-12 text-center text-slate-400 font-bold uppercase text-sm">Sin registros</td></tr>}</tbody></table></div></Card></div>)}
-      
       {activePanel === 'MACHINES' && (<div className="grid grid-cols-1 lg:grid-cols-3 gap-12 animate-in fade-in duration-300"><Card className="lg:col-span-1 border-orange-200 bg-orange-50/10"><form onSubmit={handleMachineSubmit} className="space-y-6"><h3 className="text-2xl font-black text-slate-800 uppercase tracking-tighter flex items-center gap-3"><Plus className="text-orange-600" /> {editingMachineId ? 'Actualizar Activo' : 'Registro de Activo'}</h3><div className="space-y-2"><label className="text-[10px] font-black uppercase text-slate-400 ml-2">Nombre Técnico</label><input required className="w-full p-5 rounded-2xl border-2 border-slate-100 font-bold outline-none focus:border-orange-500 transition-all shadow-inner" placeholder="Prensa Hidráulica X-10" value={machineForm.name} onChange={e => setMachineForm({...machineForm, name: e.target.value})} /></div><div className="space-y-2"><label className="text-[10px] font-black uppercase text-slate-400 ml-2">Tipo de Activo</label><select className="w-full p-5 rounded-2xl border-2 border-slate-100 font-bold outline-none focus:border-orange-500 transition-all shadow-inner" value={machineForm.assetType} onChange={(e: any) => setMachineForm({...machineForm, assetType: e.target.value})}><option value="MAQUINA">MÁQUINA</option><option value="VEHICULO">VEHÍCULO</option></select></div><div className="space-y-2"><label className="text-[10px] font-black uppercase text-slate-400 ml-2">Fecha Base / Último Manto</label><input type="date" required className="w-full p-5 rounded-2xl border-2 border-slate-100 font-bold outline-none focus:border-orange-500 transition-all shadow-inner" value={machineForm.baseDate} onChange={e => setMachineForm({...machineForm, baseDate: e.target.value})} /></div><div className="p-4 bg-white rounded-2xl border border-slate-200 space-y-4"><p className="text-xs font-black text-orange-600 uppercase">Manto. Operario (Ligero)</p><div className="space-y-2"><label className="text-[10px] font-black uppercase text-slate-400 ml-2">Asignar a:</label><select className="w-full p-3 rounded-xl border border-slate-200 text-sm font-bold" value={machineForm.operatorId} onChange={e => setMachineForm({...machineForm, operatorId: e.target.value})}><option value="">-- Sin Asignar (Pool/Rotativo) --</option>{users.filter(u => u.role === Role.OPERATOR).map(u => <option key={u.id} value={u.id}>{u.name}</option>)}</select></div><div className="space-y-2"><label className="text-[10px] font-black uppercase text-slate-400 ml-2">Frecuencia (Días)</label><input type="number" required className="w-full p-3 rounded-xl border border-slate-200 text-sm font-bold" value={machineForm.operatorInterval} onChange={e => setMachineForm({...machineForm, operatorInterval: parseInt(e.target.value)})} /></div></div><div className="p-4 bg-white rounded-2xl border border-slate-200 space-y-4"><p className="text-xs font-black text-amber-600 uppercase">Manto. Líder (Pesado)</p><div className="space-y-2"><label className="text-[10px] font-black uppercase text-slate-400 ml-2">Asignar a:</label><select className="w-full p-3 rounded-xl border border-slate-200 text-sm font-bold" value={machineForm.leaderId} onChange={e => setMachineForm({...machineForm, leaderId: e.target.value})}><option value="">-- Sin Asignar --</option>{users.filter(u => u.role === Role.LEADER).map(u => <option key={u.id} value={u.id}>{u.name}</option>)}</select></div><div className="space-y-2"><label className="text-[10px] font-black uppercase text-slate-400 ml-2">Frecuencia (Días)</label><input type="number" required className="w-full p-3 rounded-xl border border-slate-200 text-sm font-bold" value={machineForm.leaderInterval} onChange={e => setMachineForm({...machineForm, leaderInterval: parseInt(e.target.value)})} /></div></div><div className="flex gap-2"><IndustrialButton fullWidth type="submit">{editingMachineId ? 'Guardar Cambios' : 'Dar de Alta'}</IndustrialButton>{editingMachineId && <button type="button" onClick={() => { setEditingMachineId(null); setMachineForm({ name: '', operatorInterval: 15, leaderInterval: 30, operatorId: '', leaderId: '', baseDate: new Date().toISOString().slice(0, 10) } as any); }} className="px-4 font-bold text-slate-400 hover:text-red-500">Cancelar</button>}</div></form></Card><div className="lg:col-span-2"><Card className="p-0 overflow-hidden"><div className="flex items-center gap-2 p-4 bg-slate-100 border-b border-slate-200"><Search className="w-4 h-4 text-slate-400"/><input className="bg-transparent outline-none text-sm font-bold text-slate-700 w-full" placeholder="Buscar activo..." value={machineSearch} onChange={e => setMachineSearch(e.target.value)} /></div><table className="w-full text-left border-collapse"><thead className="bg-slate-900 text-white text-[10px] font-black uppercase tracking-widest"><tr><th className="p-6">Máquina</th><th className="p-6 text-center">Tipo</th><th className="p-6 text-center">Ciclos</th><th className="p-6 text-right">Acciones</th></tr></thead><tbody className="text-xs font-bold text-slate-600">{visibleMachinesInList.map(m => (<tr key={m.id} className="border-b border-slate-100 hover:bg-slate-50 transition-colors"><td className="p-6 text-slate-900 uppercase font-black tracking-tight">{m.name}</td><td className="p-6 text-center"><span className="text-[9px] bg-slate-200 px-2 py-1 rounded uppercase">{m.assetType}</span></td><td className="p-6 text-center"><div className="flex flex-col items-center gap-1"><span className="text-orange-600">Op: {m.operatorInterval}d</span><span className="text-amber-700">Líd: {m.leaderInterval}d</span></div></td><td className="p-6 text-right"><div className="flex items-center justify-end gap-3"><button onClick={() => handleEditMachine(m)} className="text-blue-400 hover:text-blue-600 transition-colors"><Pencil className="w-4 h-4" /></button><button onClick={() => handleDeleteMachine(m.id)} className="text-red-400 hover:text-red-600 transition-colors"><Trash2 className="w-4 h-4" /></button></div></td></tr>))}</tbody></table></Card></div></div>)}
-      
       {activePanel === 'USERS' && (<div className="grid grid-cols-1 lg:grid-cols-3 gap-12 animate-in fade-in duration-300"><Card className="lg:col-span-1 border-orange-200 bg-orange-50/10"><form onSubmit={addUser} className="space-y-6"><h3 className="text-2xl font-black text-slate-800 uppercase tracking-tighter flex items-center gap-3"><UserPlus className="text-orange-600" /> Nuevo Colaborador</h3><input required className="w-full p-5 rounded-2xl border-2 border-slate-100 font-bold outline-none focus:border-orange-500 transition-all shadow-inner" placeholder="Nombre y Apellido" value={userForm.name} onChange={e => setUserForm({...userForm, name: e.target.value})} /><input className="w-full p-5 rounded-2xl border-2 border-slate-100 font-bold outline-none focus:border-orange-500 transition-all shadow-inner" placeholder="Teléfono" value={userForm.phone} onChange={e => setUserForm({...userForm, phone: e.target.value})} /><div className="space-y-2"><label className="text-[10px] font-black uppercase text-slate-400 ml-2">Asignar PIN de Seguridad</label><input type="password" maxLength={4} className="w-full p-5 rounded-2xl border-2 border-slate-100 font-bold outline-none focus:border-orange-500 transition-all shadow-inner tracking-widest" placeholder="PIN" value={userForm.pin} onChange={e => setUserForm({...userForm, pin: e.target.value.replace(/[^0-9]/g, '')})} /></div><select className="w-full p-5 rounded-2xl border-2 border-slate-100 font-bold outline-none focus:border-orange-500 cursor-pointer shadow-inner" value={userForm.role} onChange={e => setUserForm({...userForm, role: e.target.value as Role})}><option value={Role.OPERATOR}>OPERARIO DE LÍNEA</option><option value={Role.LEADER}>RESP. MANTENIMIENTO GRAL.</option><option value={Role.MANAGER}>GERENCIA Y AUDITORÍA</option></select><IndustrialButton fullWidth type="submit">Alta de Usuario</IndustrialButton></form></Card><div className="lg:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-6">{users.map(u => (<Card key={u.id} className="flex justify-between items-center group border-slate-200 hover:border-orange-400 transition-all"><div className="flex items-center gap-5"><div className="bg-slate-50 p-4 rounded-2xl group-hover:bg-orange-50 group-hover:text-orange-600 transition-colors"><UserCog className="w-6 h-6" /></div><div><h4 className="font-black text-slate-900 uppercase text-sm tracking-tight">{u.name}</h4><span className="text-[9px] font-black text-orange-600 uppercase tracking-widest leading-none">{u.role === Role.LEADER ? 'RESP. MANTO.' : u.role}</span></div></div><div className="flex flex-col gap-2 text-right"><span className="text-[9px] font-bold text-slate-400 uppercase">PIN: ****</span><select className="bg-white border border-slate-100 p-2 rounded-xl text-[9px] font-black uppercase outline-none focus:border-orange-500" value={u.role} onChange={e => updateUserRole(u.id, e.target.value as Role)}><option value={Role.OPERATOR}>OPERARIO</option><option value={Role.LEADER}>RESP. MANTO.</option><option value={Role.MANAGER}>GERENCIA</option></select><button onClick={() => deleteUser(u.id)} className="text-[10px] font-black text-red-400 hover:text-red-600 uppercase flex items-center justify-end gap-1 mt-2"><Trash2 className="w-3 h-3" /> Eliminar</button></div></Card>))}</div></div>)}
-
-      {/* NUEVO PANEL: CONFIGURACIÓN CHECKLIST */}
-      {activePanel === 'CONFIG' && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 animate-in fade-in duration-300">
-            <Card className="lg:col-span-1 border-orange-200 bg-orange-50/10">
-                <form onSubmit={addChecklistItem} className="space-y-6">
-                    <h3 className="text-2xl font-black text-slate-800 uppercase tracking-tighter flex items-center gap-3"><ListChecks className="text-orange-600" /> Nueva Tarea</h3>
-                    <input className="w-full p-5 rounded-2xl border-2 border-slate-100 font-bold outline-none focus:border-orange-500 transition-all shadow-inner" placeholder="Ej: Verificar Aceite" value={newItemText} onChange={e => setNewItemText(e.target.value)} required />
-                    
-                    <div className="space-y-2">
-                        <label className="text-[10px] font-black uppercase text-slate-400 ml-2">Aplica a:</label>
-                        <select className="w-full p-5 rounded-2xl border-2 border-slate-100 font-bold outline-none focus:border-orange-500 cursor-pointer shadow-inner" value={newItemTarget} onChange={(e: any) => setNewItemTarget(e.target.value)}>
-                            <option value="ALL">Todo (Global)</option>
-                            <option value="MAQUINA">Solo Máquinas</option>
-                            <option value="VEHICULO">Solo Vehículos</option>
-                        </select>
-                    </div>
-
-                    <div className="space-y-2">
-                        <label className="text-[10px] font-black uppercase text-slate-400 ml-2">Responsable de la Tarea</label>
-                        <select className="w-full p-5 rounded-2xl border-2 border-slate-100 font-bold outline-none focus:border-orange-500 cursor-pointer shadow-inner" value={newItemRole} onChange={e => setNewItemRole(e.target.value as Role)}>
-                            <option value={Role.OPERATOR}>OPERARIO (Manto. Autónomo)</option>
-                            <option value={Role.LEADER}>LIDER (Manto. Preventivo)</option>
-                        </select>
-                    </div>
-                    <IndustrialButton fullWidth type="submit">Agregar al Checklist Global</IndustrialButton>
-                </form>
-            </Card>
-            <div className="lg:col-span-2">
-                <Card>
-                    <h3 className="text-xl font-black uppercase text-slate-700 border-b pb-6 mb-8">Listado de Tareas Globales</h3>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        {checklistItems.map(item => (
-                            <div key={item.id} className="flex justify-between items-center p-4 bg-slate-50 rounded-2xl border border-slate-100">
-                                <div>
-                                    <p className="font-bold text-slate-800 text-sm">{item.label}</p>
-                                    <div className="flex gap-2 mt-1">
-                                        <span className={`text-[9px] font-black uppercase tracking-widest ${item.roleTarget === Role.LEADER ? 'text-amber-600' : 'text-orange-600'}`}>
-                                            {item.roleTarget === Role.LEADER ? 'Líderes' : 'Operarios'}
-                                        </span>
-                                        <span className="text-[9px] font-black uppercase tracking-widest text-slate-400">| {item.targetType || 'ALL'}</span>
-                                    </div>
-                                </div>
-                                <button onClick={() => deleteChecklistItem(item.id)} className="p-2 text-slate-300 hover:text-red-500 transition-colors"><Trash2 className="w-4 h-4" /></button>
-                            </div>
-                        ))}
-                    </div>
-                </Card>
-            </div>
-        </div>
-      )}
+      {activePanel === 'CONFIG' && (<div className="grid grid-cols-1 lg:grid-cols-3 gap-8 animate-in fade-in duration-300"><Card className="lg:col-span-1 border-orange-200 bg-orange-50/10"><form onSubmit={addChecklistItem} className="space-y-6"><h3 className="text-2xl font-black text-slate-800 uppercase tracking-tighter flex items-center gap-3"><ListChecks className="text-orange-600" /> Nueva Tarea</h3><input className="w-full p-5 rounded-2xl border-2 border-slate-100 font-bold outline-none focus:border-orange-500 transition-all shadow-inner" placeholder="Ej: Verificar Aceite" value={newItemText} onChange={e => setNewItemText(e.target.value)} required /><div className="space-y-2"><label className="text-[10px] font-black uppercase text-slate-400 ml-2">Aplica a:</label><select className="w-full p-5 rounded-2xl border-2 border-slate-100 font-bold outline-none focus:border-orange-500 cursor-pointer shadow-inner" value={newItemTarget} onChange={(e: any) => setNewItemTarget(e.target.value)}><option value="ALL">Todo (Global)</option><option value="MAQUINA">Solo Máquinas</option><option value="VEHICULO">Solo Vehículos</option></select></div><div className="space-y-2"><label className="text-[10px] font-black uppercase text-slate-400 ml-2">Responsable de la Tarea</label><select className="w-full p-5 rounded-2xl border-2 border-slate-100 font-bold outline-none focus:border-orange-500 cursor-pointer shadow-inner" value={newItemRole} onChange={e => setNewItemRole(e.target.value as Role)}><option value={Role.OPERATOR}>OPERARIO (Manto. Autónomo)</option><option value={Role.LEADER}>LIDER (Manto. Preventivo)</option></select></div><IndustrialButton fullWidth type="submit">Agregar al Checklist Global</IndustrialButton></form></Card><div className="lg:col-span-2"><Card><h3 className="text-xl font-black uppercase text-slate-700 border-b pb-6 mb-8">Listado de Tareas Globales</h3><div className="grid grid-cols-1 md:grid-cols-2 gap-4">{checklistItems.map(item => (<div key={item.id} className="flex justify-between items-center p-4 bg-slate-50 rounded-2xl border border-slate-100"><div><p className="font-bold text-slate-800 text-sm">{item.label}</p><div className="flex gap-2 mt-1"><span className={`text-[9px] font-black uppercase tracking-widest ${item.roleTarget === Role.LEADER ? 'text-amber-600' : 'text-orange-600'}`}>{item.roleTarget === Role.LEADER ? 'Líderes' : 'Operarios'}</span><span className="text-[9px] font-black uppercase tracking-widest text-slate-400">| {item.targetType || 'ALL'}</span></div></div><button onClick={() => deleteChecklistItem(item.id)} className="p-2 text-slate-300 hover:text-red-500 transition-colors"><Trash2 className="w-4 h-4" /></button></div>))}</div></Card></div></div>)}
     </div>
   );
 };
