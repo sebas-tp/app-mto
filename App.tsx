@@ -4,9 +4,8 @@ import {
   MessageSquare, ClipboardList, Database, Plus, UserPlus, History, HardDrive, 
   UserCog, LayoutDashboard, X, Calendar as CalendarIcon, Filter, Trophy, Search, Lock, Fingerprint, Loader2,
   Trash2, Pencil, FileSpreadsheet, FileText, ChevronLeft, ChevronRight, Clock, Send, Download, Smartphone,
-  ListChecks, Ban, Activity, Timer, TrendingUp, Gauge, CheckSquare, Percent, Truck, Factory, FileCheck, ScanLine
+  ListChecks, Ban, Activity, Timer, TrendingUp, Gauge, CheckSquare, Percent, Truck, Factory, FileCheck
 } from 'lucide-react';
-// ... (RESTO DE IMPORTS IGUALES) ...
 import { 
   PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend,
   BarChart, Bar, XAxis, YAxis, CartesianGrid, AreaChart, Area
@@ -15,23 +14,31 @@ import {
   format, addDays, isPast, parseISO, startOfMonth, isSameMonth, 
   isWithinInterval, startOfDay, endOfDay, eachDayOfInterval, endOfMonth, startOfWeek, endOfWeek, isSameDay, addMonths, subMonths, isFuture, isToday, differenceInDays
 } from 'date-fns';
+
+// --- FIREBASE IMPORTS ---
 import { db, auth } from './firebaseConfig'; 
 import { signInWithEmailAndPassword } from 'firebase/auth';
-import { collection, doc, addDoc, updateDoc, deleteDoc, onSnapshot, query, orderBy, setDoc } from 'firebase/firestore';
-import { Role, User, Machine, MaintenanceRecord, MaintenanceType } from './types';
+import { 
+  collection, doc, addDoc, updateDoc, deleteDoc, onSnapshot, query, orderBy, setDoc 
+} from 'firebase/firestore';
 
-// ... (TIPOS Y COMPONENTES AUXILIARES IGUALES: IndustrialButton, Card, PinModal, WhatsAppModal, MiniCalendar) ...
-// (Copia y pega los componentes que ya tenías, no cambiaron)
-// Si quieres te los paso de nuevo, pero para ahorrar espacio asumo que los tienes.
-// Solo asegúrate de que el import de 'ScanLine' en lucide-react esté agregado arriba.
+import { Role, User, Machine, MaintenanceRecord, MaintenanceType } from './types';
 
 // --- TIPOS ADICIONALES ---
 type AssetType = 'MAQUINA' | 'VEHICULO';
-interface ExtendedMachine extends Machine { assetType?: AssetType; }
-interface ChecklistItem { id: string; label: string; roleTarget: Role; targetType: AssetType | 'ALL'; }
 
-// ... (PEGAR AQUÍ COMPONENTES: IndustrialButton, Card, PinModal, WhatsAppModal, MiniCalendar) ...
-// ... (Si copiaste el bloque anterior completo, ya los tienes, si no, avísame) ...
+interface ExtendedMachine extends Machine {
+  assetType?: AssetType; 
+}
+
+interface ChecklistItem {
+  id: string;
+  label: string;
+  roleTarget: Role; 
+  targetType: AssetType | 'ALL';
+}
+
+// --- COMPONENTS ---
 
 const IndustrialButton: React.FC<{
   children: React.ReactNode;
@@ -52,11 +59,18 @@ const IndustrialButton: React.FC<{
     dark: "bg-slate-900 text-white hover:bg-slate-800 border border-slate-700",
     ghost: "bg-transparent text-slate-400 hover:text-slate-600 shadow-none"
   };
-  return <button type={type} onClick={onClick} disabled={disabled} className={`${baseStyles} ${variants[variant]} ${fullWidth ? 'w-full' : ''} ${className}`}>{children}</button>;
+
+  return (
+    <button type={type} onClick={onClick} disabled={disabled} className={`${baseStyles} ${variants[variant]} ${fullWidth ? 'w-full' : ''} ${className}`}>
+      {children}
+    </button>
+  );
 };
 
 const Card: React.FC<{ children: React.ReactNode; className?: string; onClick?: (e: any) => void }> = ({ children, className = '', onClick }) => (
-  <div onClick={onClick} className={`bg-white rounded-[1.5rem] md:rounded-[2rem] shadow-xl shadow-slate-200/40 p-5 md:p-8 border border-slate-100 ${className}`}>{children}</div>
+  <div onClick={onClick} className={`bg-white rounded-[1.5rem] md:rounded-[2rem] shadow-xl shadow-slate-200/40 p-5 md:p-8 border border-slate-100 ${className}`}>
+    {children}
+  </div>
 );
 
 const PinModal: React.FC<{ isOpen: boolean; onClose: () => void; onConfirm: (pin: string) => void; title: string }> = ({ isOpen, onClose, onConfirm, title }) => {
@@ -91,7 +105,7 @@ const WhatsAppModal: React.FC<{ isOpen: boolean; onClose: () => void; onSend: (t
   );
 };
 
-// --- MINI CALENDARIO (Mismo de antes) ---
+// --- MINI CALENDARIO ---
 const MiniCalendar: React.FC<{ machines: ExtendedMachine[], records: MaintenanceRecord[], users?: User[], user?: User, mode: 'MANAGER' | 'OPERATOR' }> = ({ machines, records, users = [], user, mode }) => {
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [selectedDay, setSelectedDay] = useState<Date | null>(null);
@@ -190,9 +204,8 @@ const MiniCalendar: React.FC<{ machines: ExtendedMachine[], records: Maintenance
   );
 };
 
-
 // --- MAIN APP ---
-// (Mantiene la estructura de App y ManagerView/LeaderView que no cambian en esta logica)
+
 export default function App() {
   const [users, setUsers] = useState<User[]>([]);
   const [machines, setMachines] = useState<ExtendedMachine[]>([]);
@@ -234,6 +247,7 @@ export default function App() {
     if (adminPass === 'admin123') { const admin = users.find(u => u.role === Role.MANAGER); if (admin) { setCurrentUser(admin); localStorage.setItem('local_session_user', JSON.stringify(admin)); setView('DASHBOARD'); setShowAdminLogin(false); setAdminPass(''); } else { alert("No se encontró usuario Gerente en la base de datos."); } } else { alert("Contraseña incorrecta."); } 
   };
   const handleLogout = () => { setCurrentUser(null); localStorage.removeItem('local_session_user'); setView('LOGIN'); };
+  
   const seedDB = async () => { alert("Función desactivada."); };
   const getRoleDisplayName = (role?: Role) => { if (role === Role.LEADER) return "RESP. MANTENIMIENTO"; if (role === Role.MANAGER) return "GERENCIA"; return "OPERARIO"; };
 
@@ -317,7 +331,7 @@ export default function App() {
   );
 }
 
-// --- VISTA OPERARIO MODIFICADA PARA PERMITIR TRABAJAR EN CUALQUIER MÁQUINA ---
+// --- VIEWS ---
 
 const OperatorView: React.FC<{ user: User; machines: ExtendedMachine[]; records: MaintenanceRecord[]; checklistItems: ChecklistItem[] }> = ({ user, machines, records, checklistItems }) => {
   const [selectedMachine, setSelectedMachine] = useState<ExtendedMachine | null>(null);
@@ -326,25 +340,21 @@ const OperatorView: React.FC<{ user: User; machines: ExtendedMachine[]; records:
   const [downtime, setDowntime] = useState(0);
   const [isCritical, setIsCritical] = useState(false);
   const [showPinModal, setShowPinModal] = useState(false);
-  const [searchTerm, setSearchTerm] = useState(''); // NUEVO BUSCADOR
 
-  // 1. MIS MAQUINAS (Donde soy el dueño)
+  // FILTRO HÍBRIDO: Mis fijas + Las "huérfanas" (null)
   const myMachines = machines.filter(m => m.operatorId === user.id);
   
-  // 2. BUSCADOR GENERAL (Permite encontrar CUALQUIER otra máquina para trabajar)
-  const otherMachines = machines.filter(m => 
-    m.operatorId !== user.id && 
-    m.name.toLowerCase().includes(searchTerm.toLowerCase())
-  );
-
-  const handleCheck = (itemId: string, status: string) => { setChecklistStatus(prev => { if (prev[itemId] === status) { const n = { ...prev }; delete n[itemId]; return n; } return { ...prev, [itemId]: status }; }); };
+  // AQUI ESTABA EL ERROR: Cambié commonMachines por availableMachines para que el nombre coincida con el uso abajo
+  const availableMachines = machines.filter(m => !m.operatorId);
   
-  // Filtramos el checklist segun la maquina seleccionada
+  // FILTRADO INTELIGENTE DE CHECKLIST: Solo items para operarios Y que coincidan con el tipo de activo (o ALL)
   const myChecklistItems = checklistItems.filter(i => 
     i.roleTarget === Role.OPERATOR && 
     (i.targetType === 'ALL' || i.targetType === selectedMachine?.assetType)
   );
 
+  const updateMachineAssign = async (machineId: string, userId: string) => { await updateDoc(doc(db, "machines", machineId), { operatorId: userId }); };
+  const handleCheck = (itemId: string, status: string) => { setChecklistStatus(prev => { if (prev[itemId] === status) { const n = { ...prev }; delete n[itemId]; return n; } return { ...prev, [itemId]: status }; }); };
   const requestSignature = () => { const allChecked = myChecklistItems.every(i => checklistStatus[i.id]); if (!selectedMachine || !allChecked) return alert("Complete todos los items."); setShowPinModal(true); };
   
   const finalizeManto = async (pin: string) => { 
@@ -355,7 +365,7 @@ const OperatorView: React.FC<{ user: User; machines: ExtendedMachine[]; records:
       const fullObs = `[PARADA: ${downtime} min] [CHECKLIST: ${checklistText}] ${obs}`;
       await addDoc(collection(db, "records"), { machineId: selectedMachine.id, userId: user.id, date: new Date().toISOString(), observations: fullObs, type: MaintenanceType.LIGHT, isIssue: isCritical, downtime: downtime }); 
       await updateDoc(doc(db, "machines", selectedMachine.id), { lastOperatorDate: new Date().toISOString() }); 
-      setSelectedMachine(null); setIsCritical(false); setObs(''); setChecklistStatus({}); setDowntime(0); setShowPinModal(false); setSearchTerm(''); alert("Guardado."); 
+      setSelectedMachine(null); setIsCritical(false); setObs(''); setChecklistStatus({}); setDowntime(0); setShowPinModal(false); alert("Guardado."); 
     } catch (e) { console.error(e); } 
   };
 
@@ -417,42 +427,34 @@ const OperatorView: React.FC<{ user: User; machines: ExtendedMachine[]; records:
         </div>
       )}
 
-      {/* SECCION 2: BUSCADOR PARA CUALQUIER MAQUINA (ROTACION) */}
-      <div className="space-y-6 pt-12 border-t border-slate-200">
-          <div className="flex flex-col md:flex-row justify-between items-end gap-4">
-              <h3 className="text-xl font-black text-slate-800 uppercase flex items-center gap-3"><ScanLine className="text-slate-400" /> Operar Otro Equipo</h3>
-              <div className="flex items-center gap-2 p-3 bg-white rounded-xl border border-slate-200 w-full md:w-auto">
-                <Search className="w-4 h-4 text-slate-400" />
-                <input className="outline-none text-sm font-bold text-slate-700 bg-transparent" placeholder="Buscar equipo..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
-              </div>
-          </div>
-          
-          {searchTerm && (
-              <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6 animate-in fade-in">
-                  {otherMachines.map(m => {
-                      const isDue = isPast(addDays(parseISO(m.lastOperatorDate), m.operatorInterval));
-                      return (
-                          <div key={m.id} onClick={() => { setSelectedMachine(m); setChecklistStatus({}); }} className={`bg-white p-6 rounded-3xl border cursor-pointer hover:shadow-xl transition-all flex flex-col justify-between items-start group ${isDue ? 'border-red-200 bg-red-50/10' : 'border-slate-100'}`}>
-                              <div className="flex justify-between w-full mb-4">
-                                  <div className="bg-slate-100 p-2 rounded-xl text-slate-500 group-hover:text-orange-600 transition-colors">
-                                      {m.assetType === 'VEHICULO' ? <Truck className="w-5 h-5"/> : <HardDrive className="w-5 h-5" />}
-                                  </div>
-                                  <span className="text-[9px] bg-slate-200 px-2 py-1 rounded font-bold uppercase text-slate-500">Visitante</span>
-                              </div>
-                              <p className="font-black text-slate-800 uppercase tracking-tighter leading-none mb-2">{m.name}</p>
-                              <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Ciclo: {m.operatorInterval}d</p>
-                          </div>
-                      );
-                  })}
-                  {otherMachines.length === 0 && <p className="text-slate-400 text-sm italic col-span-full">No se encontraron equipos con ese nombre.</p>}
-              </div>
-          )}
-      </div>
+      {/* SECCION 2: ACTIVOS COMUNES / POOL */}
+      {availableMachines.length > 0 && (
+        <div className="space-y-6 pt-12 border-t border-slate-200">
+            <h3 className="text-xl font-black text-slate-800 uppercase flex items-center gap-3"><Factory className="text-slate-400" /> Activos Comunes / Rotativos</h3>
+            <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6">
+                {availableMachines.map(m => {
+                    const isDue = isPast(addDays(parseISO(m.lastOperatorDate), m.operatorInterval));
+                    return (
+                        <div key={m.id} onClick={() => { setSelectedMachine(m); setChecklistStatus({}); }} className={`bg-white p-6 rounded-3xl border cursor-pointer hover:shadow-xl transition-all flex flex-col justify-between items-start group ${isDue ? 'border-red-200 bg-red-50/10' : 'border-slate-100'}`}>
+                            <div className="flex justify-between w-full mb-4">
+                                <div className="bg-slate-100 p-2 rounded-xl text-slate-500 group-hover:text-orange-600 transition-colors">
+                                    {m.assetType === 'VEHICULO' ? <Truck className="w-5 h-5"/> : <HardDrive className="w-5 h-5" />}
+                                </div>
+                                {isDue && <span className="w-3 h-3 bg-red-500 rounded-full animate-ping"></span>}
+                            </div>
+                            <p className="font-black text-slate-800 uppercase tracking-tighter leading-none mb-2">{m.name}</p>
+                            <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Ciclo: {m.operatorInterval}d</p>
+                        </div>
+                    );
+                })}
+            </div>
+        </div>
+      )}
     </div>
   );
 };
 
-// ... LeaderView y ManagerView se mantienen igual ...
+// ... LeaderView y ManagerView se mantienen igual (incluyen la mejora del calendario) ...
 const LeaderView: React.FC<{ user: User; machines: ExtendedMachine[]; records: MaintenanceRecord[]; checklistItems: ChecklistItem[] }> = ({ user, machines, records, checklistItems }) => {
   const [closingIssue, setClosingIssue] = useState<MaintenanceRecord | null>(null);
   const [closingComment, setClosingComment] = useState('');
@@ -487,7 +489,13 @@ const LeaderView: React.FC<{ user: User; machines: ExtendedMachine[]; records: M
       <Card className="max-w-2xl mx-auto border-amber-600 shadow-amber-100/50 relative mb-20">
         <PinModal isOpen={showPinModal} onClose={() => setShowPinModal(false)} onConfirm={finalizeLeaderManto} title="Firma de Responsable Técnico" />
         <button onClick={() => setSelectedMachine(null)} className="text-[10px] font-black uppercase text-amber-700 mb-8 flex items-center gap-2 tracking-widest">← Cancelar Operación</button>
-        <div className="mb-8"><h2 className="text-4xl font-black text-slate-800 uppercase tracking-tighter">{selectedMachine.name}</h2><p className="text-amber-600 font-bold uppercase text-[10px] tracking-widest mt-2">Protocolo Técnico Avanzado</p></div>
+        <div className="mb-8">
+            <h2 className="text-4xl font-black text-slate-800 uppercase tracking-tighter">{selectedMachine.name}</h2>
+            <div className="flex gap-2 mt-2">
+                <span className="bg-amber-100 text-amber-800 font-bold uppercase text-[9px] px-2 py-1 rounded">{selectedMachine.assetType}</span>
+                <p className="text-amber-600 font-bold uppercase text-[10px] tracking-widest py-1">Protocolo Técnico Avanzado</p>
+            </div>
+        </div>
         
         <div className="space-y-4 mb-8">
             {myChecklistItems.map((item) => (
@@ -529,7 +537,7 @@ const ManagerView: React.FC<{ users: User[]; machines: ExtendedMachine[]; record
   const [selectedMachineId, setSelectedMachineId] = useState<string>('ALL');
   const [chartMetric, setChartMetric] = useState<'DOWNTIME' | 'EFFECTIVENESS'>('EFFECTIVENESS');
   const [viewRecord, setViewRecord] = useState<MaintenanceRecord | null>(null);
-  const [machineSearch, setMachineSearch] = useState('');
+  const [machineSearch, setMachineSearch] = useState(''); // NEW SEARCH STATE
 
   const [newItemText, setNewItemText] = useState('');
   const [newItemRole, setNewItemRole] = useState<Role>(Role.OPERATOR);
@@ -540,6 +548,7 @@ const ManagerView: React.FC<{ users: User[]; machines: ExtendedMachine[]; record
   const filteredMachines = useMemo(() => selectedMachineId === 'ALL' ? machines : machines.filter(m => m.id === selectedMachineId), [machines, selectedMachineId]);
   const filteredRecordsForStats = useMemo(() => selectedMachineId === 'ALL' ? records : records.filter(r => r.machineId === selectedMachineId), [records, selectedMachineId]);
 
+  // NEW: FILTER MACHINES LIST BY SEARCH TERM
   const visibleMachinesInList = useMemo(() => {
     return machines.filter(m => m.name.toLowerCase().includes(machineSearch.toLowerCase()));
   }, [machines, machineSearch]);
@@ -594,6 +603,7 @@ const ManagerView: React.FC<{ users: User[]; machines: ExtendedMachine[]; record
 
   const filteredRecords = useMemo(() => { return records.filter(r => { const matchUser = historyFilter.userId === 'ALL' || r.userId === historyFilter.userId; let matchDate = true; if (historyFilter.dateFrom && historyFilter.dateTo) { matchDate = isWithinInterval(parseISO(r.date), { start: startOfDay(parseISO(historyFilter.dateFrom)), end: endOfDay(parseISO(historyFilter.dateTo)) }); } const matchType = historyFilter.type === 'ALL' ? true : historyFilter.type === 'ISSUE' ? r.isIssue : !r.isIssue; return matchUser && matchDate && matchType; }).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()); }, [records, historyFilter]);
 
+  // EXPORT, PRINT, WHATSAPP (Same as before)
   const exportToCSV = () => {
     const headers = "Fecha,Hora,Maquina,Usuario,Tipo,Observaciones\n";
     const rows = filteredRecords.map(r => {
