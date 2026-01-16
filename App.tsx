@@ -12,7 +12,7 @@ import {
 } from 'recharts';
 import { 
   format, addDays, isPast, parseISO, startOfMonth, isSameMonth, 
-  isWithinInterval, startOfDay, endOfDay, eachDayOfInterval, endOfMonth, startOfWeek, endOfWeek, isSameDay, addMonths, subMonths, isFuture, isToday, differenceInDays
+  isWithinInterval, startOfDay, endOfDay, eachDayOfInterval, endOfMonth, startOfWeek, endOfWeek, isSameDay, addMonths, subMonths, isFuture, isToday, differenceInDays, isValid
 } from 'date-fns';
 
 // --- FIREBASE IMPORTS ---
@@ -37,6 +37,13 @@ interface ChecklistItem {
   roleTarget: Role; 
   targetType: AssetType | 'ALL';
 }
+
+// --- HELPER SEGURO PARA FECHAS (EVITA PANTALLA BLANCA) ---
+const safeDate = (dateStr: string | undefined | null): Date => {
+    if (!dateStr) return new Date(); // Si no hay fecha, devuelve HOY para no romper
+    const parsed = parseISO(dateStr);
+    return isValid(parsed) ? parsed : new Date();
+};
 
 // --- COMPONENTS ---
 
@@ -105,23 +112,23 @@ const WhatsAppModal: React.FC<{ isOpen: boolean; onClose: () => void; onSend: (t
   );
 };
 
-// --- MINI CALENDARIO ---
+// --- MINI CALENDARIO MEJORADO (CON PROTECCIÓN DE FECHAS) ---
 const MiniCalendar: React.FC<{ machines: ExtendedMachine[], records: MaintenanceRecord[], users?: User[], user?: User, mode: 'MANAGER' | 'OPERATOR' }> = ({ machines, records, users = [], user, mode }) => {
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [selectedDay, setSelectedDay] = useState<Date | null>(null);
   const calendarDays = useMemo(() => eachDayOfInterval({ start: startOfWeek(startOfMonth(currentMonth)), end: endOfWeek(endOfMonth(currentMonth)) }), [currentMonth]);
   
   const getDayStatus = (date: Date) => {
-    const dayRecords = records.filter(r => isSameDay(parseISO(r.date), date) && (mode === 'MANAGER' || r.userId === user?.id));
+    const dayRecords = records.filter(r => isSameDay(safeDate(r.date), date) && (mode === 'MANAGER' || r.userId === user?.id));
     const isPending = machines.some(m => {
-        const opNext = addDays(parseISO(m.lastOperatorDate), m.operatorInterval);
-        const leadNext = addDays(parseISO(m.lastLeaderDate), m.leaderInterval);
+        const opNext = addDays(safeDate(m.lastOperatorDate), m.operatorInterval || 15);
+        const leadNext = addDays(safeDate(m.lastLeaderDate), m.leaderInterval || 30);
         const opMatch = isSameDay(opNext, date);
         const leadMatch = isSameDay(leadNext, date);
         if (mode === 'MANAGER') return opMatch || leadMatch;
         else if (user) {
-            if (user.role === Role.OPERATOR) return (m.operatorId === user.id || m.operatorId === null) && opMatch;
-            if (user.role === Role.LEADER) return (m.leaderId === user.id || m.leaderId === null) && leadMatch;
+            if (user.role === Role.OPERATOR) return (m.operatorId === user.id || !m.operatorId) && opMatch;
+            if (user.role === Role.LEADER) return (m.leaderId === user.id || !m.leaderId) && leadMatch;
         }
         return false;
     });
@@ -132,21 +139,21 @@ const MiniCalendar: React.FC<{ machines: ExtendedMachine[], records: Maintenance
   };
 
   const getDetails = (date: Date) => {
-    const done = records.filter(r => isSameDay(parseISO(r.date), date) && (mode === 'MANAGER' || r.userId === user?.id));
+    const done = records.filter(r => isSameDay(safeDate(r.date), date) && (mode === 'MANAGER' || r.userId === user?.id));
     let pending: any[] = [];
     machines.forEach(m => {
-        const opNext = addDays(parseISO(m.lastOperatorDate), m.operatorInterval);
-        const leadNext = addDays(parseISO(m.lastLeaderDate), m.leaderInterval);
+        const opNext = addDays(safeDate(m.lastOperatorDate), m.operatorInterval || 15);
+        const leadNext = addDays(safeDate(m.lastLeaderDate), m.leaderInterval || 30);
         if (isSameDay(opNext, date)) {
             const resp = users.find(u => u.id === m.operatorId);
-            if (mode === 'MANAGER' || (user?.role === Role.OPERATOR && (user.id === m.operatorId || m.operatorId === null))) {
+            if (mode === 'MANAGER' || (user?.role === Role.OPERATOR && (user.id === m.operatorId || !m.operatorId))) {
                 const exists = done.some(r => r.machineId === m.id && r.type === MaintenanceType.LIGHT);
                 if (!exists) pending.push({ machineName: m.name, role: 'Operario', responsibleName: resp?.name || 'COMÚN/ROTATIVO' });
             }
         }
         if (isSameDay(leadNext, date)) {
             const resp = users.find(u => u.id === m.leaderId);
-            if (mode === 'MANAGER' || (user?.role === Role.LEADER && (user.id === m.leaderId || m.leaderId === null))) {
+            if (mode === 'MANAGER' || (user?.role === Role.LEADER && (user.id === m.leaderId || !m.leaderId))) {
                 const exists = done.some(r => r.machineId === m.id && r.type === MaintenanceType.HEAVY);
                 if (!exists) pending.push({ machineName: m.name, role: 'Líder', responsibleName: resp?.name || 'COMÚN/ROTATIVO' });
             }
@@ -331,7 +338,7 @@ export default function App() {
   );
 }
 
-// --- VISTA OPERARIO MODIFICADA PARA REFLEJAR "LA HOJA PEGADA" ---
+// --- VISTA OPERARIO MODIFICADA Y BLINDADA ---
 
 const OperatorView: React.FC<{ user: User; machines: ExtendedMachine[]; records: MaintenanceRecord[]; checklistItems: ChecklistItem[] }> = ({ user, machines, records, checklistItems }) => {
   const [selectedMachine, setSelectedMachine] = useState<ExtendedMachine | null>(null);
@@ -346,17 +353,18 @@ const OperatorView: React.FC<{ user: User; machines: ExtendedMachine[]; records:
   const myMachines = machines.filter(m => m.operatorId === user.id);
 
   // 2. ALERTAS CRÍTICAS (La "hoja de papel" roja): Cualquier maquina vencida que NO sea mia
+  // USAMOS safeDate PARA EVITAR CRASH SI LA FECHA ES NULL
   const alertMachines = machines.filter(m => 
     m.operatorId !== user.id && 
-    isPast(addDays(parseISO(m.lastOperatorDate), m.operatorInterval))
+    isPast(addDays(safeDate(m.lastOperatorDate), m.operatorInterval || 15))
   );
   
   // 3. BUSCADOR GENERAL (El resto, para mantenimientos adelantados o no vencidos)
-  // Filtramos: Que no sea mia Y que no esté ya en la lista de alertas (para no duplicar)
+  // USAMOS safeDate Y VALIDAMOS NOMBRE
   const otherMachines = machines.filter(m => 
     m.operatorId !== user.id && 
-    !isPast(addDays(parseISO(m.lastOperatorDate), m.operatorInterval)) &&
-    m.name.toLowerCase().includes(searchTerm.toLowerCase())
+    !isPast(addDays(safeDate(m.lastOperatorDate), m.operatorInterval || 15)) &&
+    (m.name || '').toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   const handleCheck = (itemId: string, status: string) => { setChecklistStatus(prev => { if (prev[itemId] === status) { const n = { ...prev }; delete n[itemId]; return n; } return { ...prev, [itemId]: status }; }); };
@@ -422,7 +430,7 @@ const OperatorView: React.FC<{ user: User; machines: ExtendedMachine[]; records:
             <h3 className="text-xl font-black text-slate-800 uppercase flex items-center gap-3"><UserCog className="text-orange-600" /> Mis Responsabilidades</h3>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
                 {myMachines.map(m => { 
-                    const isDue = isPast(addDays(parseISO(m.lastOperatorDate), m.operatorInterval)); 
+                    const isDue = isPast(addDays(safeDate(m.lastOperatorDate), m.operatorInterval || 15)); 
                     return (
                         <Card key={m.id} className={`${isDue ? 'border-red-500 shadow-red-100' : 'border-emerald-500 shadow-emerald-100'} cursor-pointer hover:scale-[1.02] transition-transform`} onClick={() => { setSelectedMachine(m); setChecklistStatus({}); }}>
                             <div className="flex justify-between mb-4">
@@ -492,8 +500,7 @@ const OperatorView: React.FC<{ user: User; machines: ExtendedMachine[]; records:
   );
 };
 
-// ... LeaderView y ManagerView IGUALES AL ANTERIOR ...
-// (Copia y pega LeaderView y ManagerView del código anterior para completar el archivo)
+// ... LeaderView y ManagerView se mantienen igual (copiar del bloque anterior) ...
 const LeaderView: React.FC<{ user: User; machines: ExtendedMachine[]; records: MaintenanceRecord[]; checklistItems: ChecklistItem[] }> = ({ user, machines, records, checklistItems }) => {
   const [closingIssue, setClosingIssue] = useState<MaintenanceRecord | null>(null);
   const [closingComment, setClosingComment] = useState('');
@@ -528,7 +535,13 @@ const LeaderView: React.FC<{ user: User; machines: ExtendedMachine[]; records: M
       <Card className="max-w-2xl mx-auto border-amber-600 shadow-amber-100/50 relative mb-20">
         <PinModal isOpen={showPinModal} onClose={() => setShowPinModal(false)} onConfirm={finalizeLeaderManto} title="Firma de Responsable Técnico" />
         <button onClick={() => setSelectedMachine(null)} className="text-[10px] font-black uppercase text-amber-700 mb-8 flex items-center gap-2 tracking-widest">← Cancelar Operación</button>
-        <div className="mb-8"><h2 className="text-4xl font-black text-slate-800 uppercase tracking-tighter">{selectedMachine.name}</h2><p className="text-amber-600 font-bold uppercase text-[10px] tracking-widest mt-2">Protocolo Técnico Avanzado</p></div>
+        <div className="mb-8">
+            <h2 className="text-4xl font-black text-slate-800 uppercase tracking-tighter">{selectedMachine.name}</h2>
+            <div className="flex gap-2 mt-2">
+                <span className="bg-amber-100 text-amber-800 font-bold uppercase text-[9px] px-2 py-1 rounded">{selectedMachine.assetType}</span>
+                <p className="text-amber-600 font-bold uppercase text-[10px] tracking-widest py-1">Protocolo Técnico Avanzado</p>
+            </div>
+        </div>
         
         <div className="space-y-4 mb-8">
             {myChecklistItems.map((item) => (
@@ -554,7 +567,7 @@ const LeaderView: React.FC<{ user: User; machines: ExtendedMachine[]; records: M
       <div className="flex flex-col md:flex-row justify-between items-end gap-8"><div><h2 className="text-4xl md:text-5xl font-black text-slate-900 uppercase tracking-tighter leading-none">Resp. Mantenimiento <span className="text-orange-600">Gral.</span></h2><p className="text-slate-400 font-bold uppercase text-[10px] tracking-widest mt-3">Supervisión de Línea y Equipos Críticos</p></div><div className="w-full md:w-96"><MiniCalendar machines={machines} records={records} user={user} mode="OPERATOR" /></div></div>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-12">
         <div className="space-y-8"><h3 className="text-2xl font-black text-red-600 uppercase flex items-center gap-3"><AlertTriangle className="animate-pulse" /> Alertas de Campo</h3>{issues.length === 0 ? (<div className="bg-white p-12 rounded-[2.5rem] border border-slate-100 text-center"><CheckCircle2 className="w-10 h-10 text-emerald-400 mx-auto mb-4" /><p className="text-slate-400 font-black uppercase text-xs">Sin incidencias</p></div>) : (issues.map(r => (<Card key={r.id} className="border-l-8 border-red-600 bg-red-50/20"><div className="flex justify-between items-start mb-4"><h4 className="text-xl font-black text-slate-800 uppercase tracking-tight">{machines.find(m => m.id === r.machineId)?.name}</h4><span className="text-[9px] font-black bg-red-600 text-white px-3 py-1 rounded-full uppercase">Falla Urgente</span></div><p className="text-slate-600 font-medium italic mb-6 leading-relaxed">"{r.observations}"</p><div className="flex justify-between items-center border-t border-red-100 pt-6"><p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Reporte por Operario</p><button className="text-[10px] font-black text-orange-600 hover:text-orange-700 uppercase tracking-tighter bg-white px-4 py-2 rounded-xl shadow-sm hover:shadow-md transition-all" onClick={() => setClosingIssue(r)}>Resolver Incidencia</button></div></Card>)))}</div>
-        <div className="space-y-8"><h3 className="text-2xl font-black text-amber-700 uppercase flex items-center gap-3"><HardDrive /> Mis Equipos Asignados</h3>{myMachines.length === 0 ? (<div className="bg-white p-12 rounded-[2.5rem] border border-slate-100 text-center"><p className="text-slate-400 font-black uppercase text-xs">Sin tareas pesadas a cargo</p></div>) : (myMachines.map(m => { const isDue = isPast(addDays(parseISO(m.lastLeaderDate), m.leaderInterval)); return (<Card key={m.id} className={isDue ? 'border-red-500 shadow-red-50' : 'border-amber-600'}><div className="flex justify-between items-start mb-6"><h4 className="text-2xl font-black text-slate-800 uppercase tracking-tight leading-none">{m.name}</h4>{isDue && <span className="bg-red-600 text-white text-[9px] px-3 py-1 rounded-full animate-bounce uppercase font-black">Pendiente</span>}</div><div className="bg-slate-50 p-4 rounded-2xl mb-6"><p className="text-[10px] font-black text-slate-400 uppercase mb-1">Último Manto.</p><p className="font-bold text-slate-700">{format(parseISO(m.lastLeaderDate), 'dd MMMM, yyyy')}</p></div><IndustrialButton variant="secondary" fullWidth onClick={() => { setSelectedMachine(m); setChecklistStatus({}); }}>Iniciar Protocolo Experto</IndustrialButton></Card>); }))}</div>
+        <div className="space-y-8"><h3 className="text-2xl font-black text-amber-700 uppercase flex items-center gap-3"><HardDrive /> Mis Equipos Asignados</h3>{myMachines.length === 0 ? (<div className="bg-white p-12 rounded-[2.5rem] border border-slate-100 text-center"><p className="text-slate-400 font-black uppercase text-xs">Sin tareas pesadas a cargo</p></div>) : (myMachines.map(m => { const isDue = isPast(addDays(safeDate(m.lastLeaderDate), m.leaderInterval || 30)); return (<Card key={m.id} className={isDue ? 'border-red-500 shadow-red-50' : 'border-amber-600'}><div className="flex justify-between items-start mb-6"><h4 className="text-2xl font-black text-slate-800 uppercase tracking-tight leading-none">{m.name}</h4>{isDue && <span className="bg-red-600 text-white text-[9px] px-3 py-1 rounded-full animate-bounce uppercase font-black">Pendiente</span>}</div><div className="bg-slate-50 p-4 rounded-2xl mb-6"><p className="text-[10px] font-black text-slate-400 uppercase mb-1">Último Manto.</p><p className="font-bold text-slate-700">{format(safeDate(m.lastLeaderDate), 'dd MMMM, yyyy')}</p></div><IndustrialButton variant="secondary" fullWidth onClick={() => { setSelectedMachine(m); setChecklistStatus({}); }}>Iniciar Protocolo Experto</IndustrialButton></Card>); }))}</div>
       </div>
     </div>
   );
@@ -593,8 +606,8 @@ const ManagerView: React.FC<{ users: User[]; machines: ExtendedMachine[]; record
     const totalAvailableTime = totalAssets * minutesInMonth; 
     const efficiency = totalAvailableTime > 0 ? Math.max(0, Math.round(((totalAvailableTime - totalDowntime) / totalAvailableTime) * 100)) : 100;
     const compliantMachines = filteredMachines.filter(m => {
-        const opDue = isPast(addDays(parseISO(m.lastOperatorDate), m.operatorInterval)) && !isToday(addDays(parseISO(m.lastOperatorDate), m.operatorInterval));
-        const ldDue = isPast(addDays(parseISO(m.lastLeaderDate), m.leaderInterval)) && !isToday(addDays(parseISO(m.lastLeaderDate), m.leaderInterval));
+        const opDue = isPast(addDays(safeDate(m.lastOperatorDate), m.operatorInterval || 15)) && !isToday(addDays(safeDate(m.lastOperatorDate), m.operatorInterval || 15));
+        const ldDue = isPast(addDays(safeDate(m.lastLeaderDate), m.leaderInterval || 30)) && !isToday(addDays(safeDate(m.lastLeaderDate), m.leaderInterval || 30));
         return !opDue && !ldDue;
     }).length;
     const complianceRate = totalAssets > 0 ? Math.round((compliantMachines / totalAssets) * 100) : 100;
@@ -604,8 +617,8 @@ const ManagerView: React.FC<{ users: User[]; machines: ExtendedMachine[]; record
   const stats = useMemo(() => { 
       const total = filteredMachines.length; 
       const due = filteredMachines.filter(m => {
-          const opDue = isPast(addDays(parseISO(m.lastOperatorDate), m.operatorInterval)) && !isToday(addDays(parseISO(m.lastOperatorDate), m.operatorInterval));
-          const leadDue = isPast(addDays(parseISO(m.lastLeaderDate), m.leaderInterval)) && !isToday(addDays(parseISO(m.lastLeaderDate), m.leaderInterval));
+          const opDue = isPast(addDays(safeDate(m.lastOperatorDate), m.operatorInterval || 15)) && !isToday(addDays(safeDate(m.lastOperatorDate), m.operatorInterval || 15));
+          const leadDue = isPast(addDays(safeDate(m.lastLeaderDate), m.leaderInterval || 30)) && !isToday(addDays(safeDate(m.lastLeaderDate), m.leaderInterval || 30));
           return opDue || leadDue;
       }).length; 
       return [{ name: 'Operativo', value: total - due, color: '#10b981' }, { name: 'Vencido', value: due, color: '#ef4444' }]; 
