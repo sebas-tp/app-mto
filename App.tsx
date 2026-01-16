@@ -4,7 +4,7 @@ import {
   MessageSquare, ClipboardList, Database, Plus, UserPlus, History, HardDrive, 
   UserCog, LayoutDashboard, X, Calendar as CalendarIcon, Filter, Trophy, Search, Lock, Fingerprint, Loader2,
   Trash2, Pencil, FileSpreadsheet, FileText, ChevronLeft, ChevronRight, Clock, Send, Download, Smartphone,
-  ListChecks, Ban, Activity, Timer, TrendingUp, Gauge, CheckSquare, Percent, Truck, Factory, FileCheck
+  ListChecks, Ban, Activity, Timer, TrendingUp, Gauge, CheckSquare, Percent, Truck, Factory, FileCheck, ScanLine
 } from 'lucide-react';
 import { 
   PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend,
@@ -204,6 +204,7 @@ const MiniCalendar: React.FC<{ machines: ExtendedMachine[], records: Maintenance
   );
 };
 
+
 // --- MAIN APP ---
 
 export default function App() {
@@ -340,21 +341,25 @@ const OperatorView: React.FC<{ user: User; machines: ExtendedMachine[]; records:
   const [downtime, setDowntime] = useState(0);
   const [isCritical, setIsCritical] = useState(false);
   const [showPinModal, setShowPinModal] = useState(false);
+  const [searchTerm, setSearchTerm] = useState(''); // BUSCADOR
 
-  // FILTRO HÍBRIDO: Mis fijas + Las "huérfanas" (null)
+  // 1. MIS MAQUINAS (Donde soy el dueño)
   const myMachines = machines.filter(m => m.operatorId === user.id);
   
-  // AQUI ESTABA EL ERROR: Cambié commonMachines por availableMachines para que el nombre coincida con el uso abajo
-  const availableMachines = machines.filter(m => !m.operatorId);
+  // 2. BUSCADOR GENERAL (Permite encontrar CUALQUIER otra máquina para trabajar)
+  const otherMachines = machines.filter(m => 
+    m.operatorId !== user.id && 
+    m.name.toLowerCase().includes(searchTerm.toLowerCase())
+  );
+
+  const handleCheck = (itemId: string, status: string) => { setChecklistStatus(prev => { if (prev[itemId] === status) { const n = { ...prev }; delete n[itemId]; return n; } return { ...prev, [itemId]: status }; }); };
   
-  // FILTRADO INTELIGENTE DE CHECKLIST: Solo items para operarios Y que coincidan con el tipo de activo (o ALL)
+  // Filtramos el checklist segun la maquina seleccionada
   const myChecklistItems = checklistItems.filter(i => 
     i.roleTarget === Role.OPERATOR && 
     (i.targetType === 'ALL' || i.targetType === selectedMachine?.assetType)
   );
 
-  const updateMachineAssign = async (machineId: string, userId: string) => { await updateDoc(doc(db, "machines", machineId), { operatorId: userId }); };
-  const handleCheck = (itemId: string, status: string) => { setChecklistStatus(prev => { if (prev[itemId] === status) { const n = { ...prev }; delete n[itemId]; return n; } return { ...prev, [itemId]: status }; }); };
   const requestSignature = () => { const allChecked = myChecklistItems.every(i => checklistStatus[i.id]); if (!selectedMachine || !allChecked) return alert("Complete todos los items."); setShowPinModal(true); };
   
   const finalizeManto = async (pin: string) => { 
@@ -365,7 +370,7 @@ const OperatorView: React.FC<{ user: User; machines: ExtendedMachine[]; records:
       const fullObs = `[PARADA: ${downtime} min] [CHECKLIST: ${checklistText}] ${obs}`;
       await addDoc(collection(db, "records"), { machineId: selectedMachine.id, userId: user.id, date: new Date().toISOString(), observations: fullObs, type: MaintenanceType.LIGHT, isIssue: isCritical, downtime: downtime }); 
       await updateDoc(doc(db, "machines", selectedMachine.id), { lastOperatorDate: new Date().toISOString() }); 
-      setSelectedMachine(null); setIsCritical(false); setObs(''); setChecklistStatus({}); setDowntime(0); setShowPinModal(false); alert("Guardado."); 
+      setSelectedMachine(null); setIsCritical(false); setObs(''); setChecklistStatus({}); setDowntime(0); setShowPinModal(false); setSearchTerm(''); alert("Guardado."); 
     } catch (e) { console.error(e); } 
   };
 
@@ -427,34 +432,42 @@ const OperatorView: React.FC<{ user: User; machines: ExtendedMachine[]; records:
         </div>
       )}
 
-      {/* SECCION 2: ACTIVOS COMUNES / POOL */}
-      {availableMachines.length > 0 && (
-        <div className="space-y-6 pt-12 border-t border-slate-200">
-            <h3 className="text-xl font-black text-slate-800 uppercase flex items-center gap-3"><Factory className="text-slate-400" /> Activos Comunes / Rotativos</h3>
-            <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6">
-                {availableMachines.map(m => {
-                    const isDue = isPast(addDays(parseISO(m.lastOperatorDate), m.operatorInterval));
-                    return (
-                        <div key={m.id} onClick={() => { setSelectedMachine(m); setChecklistStatus({}); }} className={`bg-white p-6 rounded-3xl border cursor-pointer hover:shadow-xl transition-all flex flex-col justify-between items-start group ${isDue ? 'border-red-200 bg-red-50/10' : 'border-slate-100'}`}>
-                            <div className="flex justify-between w-full mb-4">
-                                <div className="bg-slate-100 p-2 rounded-xl text-slate-500 group-hover:text-orange-600 transition-colors">
-                                    {m.assetType === 'VEHICULO' ? <Truck className="w-5 h-5"/> : <HardDrive className="w-5 h-5" />}
-                                </div>
-                                {isDue && <span className="w-3 h-3 bg-red-500 rounded-full animate-ping"></span>}
-                            </div>
-                            <p className="font-black text-slate-800 uppercase tracking-tighter leading-none mb-2">{m.name}</p>
-                            <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Ciclo: {m.operatorInterval}d</p>
-                        </div>
-                    );
-                })}
-            </div>
-        </div>
-      )}
+      {/* SECCION 2: BUSCADOR PARA CUALQUIER MAQUINA (ROTACION) */}
+      <div className="space-y-6 pt-12 border-t border-slate-200">
+          <div className="flex flex-col md:flex-row justify-between items-end gap-4">
+              <h3 className="text-xl font-black text-slate-800 uppercase flex items-center gap-3"><ScanLine className="text-slate-400" /> Operar Otro Equipo</h3>
+              <div className="flex items-center gap-2 p-3 bg-white rounded-xl border border-slate-200 w-full md:w-auto">
+                <Search className="w-4 h-4 text-slate-400" />
+                <input className="outline-none text-sm font-bold text-slate-700 bg-transparent" placeholder="Buscar equipo..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
+              </div>
+          </div>
+          
+          {searchTerm && (
+              <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6 animate-in fade-in">
+                  {otherMachines.map(m => {
+                      const isDue = isPast(addDays(parseISO(m.lastOperatorDate), m.operatorInterval));
+                      return (
+                          <div key={m.id} onClick={() => { setSelectedMachine(m); setChecklistStatus({}); }} className={`bg-white p-6 rounded-3xl border cursor-pointer hover:shadow-xl transition-all flex flex-col justify-between items-start group ${isDue ? 'border-red-200 bg-red-50/10' : 'border-slate-100'}`}>
+                              <div className="flex justify-between w-full mb-4">
+                                  <div className="bg-slate-100 p-2 rounded-xl text-slate-500 group-hover:text-orange-600 transition-colors">
+                                      {m.assetType === 'VEHICULO' ? <Truck className="w-5 h-5"/> : <HardDrive className="w-5 h-5" />}
+                                  </div>
+                                  <span className="text-[9px] bg-slate-200 px-2 py-1 rounded font-bold uppercase text-slate-500">Visitante</span>
+                              </div>
+                              <p className="font-black text-slate-800 uppercase tracking-tighter leading-none mb-2">{m.name}</p>
+                              <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Ciclo: {m.operatorInterval}d</p>
+                          </div>
+                      );
+                  })}
+                  {otherMachines.length === 0 && <p className="text-slate-400 text-sm italic col-span-full">No se encontraron equipos con ese nombre.</p>}
+              </div>
+          )}
+      </div>
     </div>
   );
 };
 
-// ... LeaderView y ManagerView se mantienen igual (incluyen la mejora del calendario) ...
+// ... LeaderView y ManagerView se mantienen igual (copiar del bloque anterior) ...
 const LeaderView: React.FC<{ user: User; machines: ExtendedMachine[]; records: MaintenanceRecord[]; checklistItems: ChecklistItem[] }> = ({ user, machines, records, checklistItems }) => {
   const [closingIssue, setClosingIssue] = useState<MaintenanceRecord | null>(null);
   const [closingComment, setClosingComment] = useState('');
@@ -489,13 +502,7 @@ const LeaderView: React.FC<{ user: User; machines: ExtendedMachine[]; records: M
       <Card className="max-w-2xl mx-auto border-amber-600 shadow-amber-100/50 relative mb-20">
         <PinModal isOpen={showPinModal} onClose={() => setShowPinModal(false)} onConfirm={finalizeLeaderManto} title="Firma de Responsable Técnico" />
         <button onClick={() => setSelectedMachine(null)} className="text-[10px] font-black uppercase text-amber-700 mb-8 flex items-center gap-2 tracking-widest">← Cancelar Operación</button>
-        <div className="mb-8">
-            <h2 className="text-4xl font-black text-slate-800 uppercase tracking-tighter">{selectedMachine.name}</h2>
-            <div className="flex gap-2 mt-2">
-                <span className="bg-amber-100 text-amber-800 font-bold uppercase text-[9px] px-2 py-1 rounded">{selectedMachine.assetType}</span>
-                <p className="text-amber-600 font-bold uppercase text-[10px] tracking-widest py-1">Protocolo Técnico Avanzado</p>
-            </div>
-        </div>
+        <div className="mb-8"><h2 className="text-4xl font-black text-slate-800 uppercase tracking-tighter">{selectedMachine.name}</h2><p className="text-amber-600 font-bold uppercase text-[10px] tracking-widest mt-2">Protocolo Técnico Avanzado</p></div>
         
         <div className="space-y-4 mb-8">
             {myChecklistItems.map((item) => (
@@ -537,7 +544,7 @@ const ManagerView: React.FC<{ users: User[]; machines: ExtendedMachine[]; record
   const [selectedMachineId, setSelectedMachineId] = useState<string>('ALL');
   const [chartMetric, setChartMetric] = useState<'DOWNTIME' | 'EFFECTIVENESS'>('EFFECTIVENESS');
   const [viewRecord, setViewRecord] = useState<MaintenanceRecord | null>(null);
-  const [machineSearch, setMachineSearch] = useState(''); // NEW SEARCH STATE
+  const [machineSearch, setMachineSearch] = useState('');
 
   const [newItemText, setNewItemText] = useState('');
   const [newItemRole, setNewItemRole] = useState<Role>(Role.OPERATOR);
@@ -548,7 +555,6 @@ const ManagerView: React.FC<{ users: User[]; machines: ExtendedMachine[]; record
   const filteredMachines = useMemo(() => selectedMachineId === 'ALL' ? machines : machines.filter(m => m.id === selectedMachineId), [machines, selectedMachineId]);
   const filteredRecordsForStats = useMemo(() => selectedMachineId === 'ALL' ? records : records.filter(r => r.machineId === selectedMachineId), [records, selectedMachineId]);
 
-  // NEW: FILTER MACHINES LIST BY SEARCH TERM
   const visibleMachinesInList = useMemo(() => {
     return machines.filter(m => m.name.toLowerCase().includes(machineSearch.toLowerCase()));
   }, [machines, machineSearch]);
