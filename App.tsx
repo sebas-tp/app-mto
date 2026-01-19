@@ -359,28 +359,35 @@ export default function App() {
 
 // --- VISTA OPERARIO MODIFICADA PARA VEHÍCULOS ---
 
-const OperatorView: React.FC<{ user: User; machines: ExtendedMachine[]; records: MaintenanceRecord[]; checklistItems: ChecklistItem[] }> = ({ user, machines, records, checklistItems }) => {
+// --- VISTA OPERARIO (CORREGIDA: ICONOS SEGUROS) ---
+
+const OperatorView: React.FC<{ user: User; users: User[]; machines: ExtendedMachine[]; records: MaintenanceRecord[]; checklistItems: ChecklistItem[] }> = ({ user, users, machines, records, checklistItems }) => {
   const [selectedMachine, setSelectedMachine] = useState<ExtendedMachine | null>(null);
   const [checklistStatus, setChecklistStatus] = useState<Record<string, string>>({});
   const [obs, setObs] = useState('');
   
-  // NUEVO: Estado para documentación de vehículos
+  // 1. Estado para documentación de vehículos
   const [vehicleDocs, setVehicleDocs] = useState(''); 
   
   const [downtime, setDowntime] = useState(0);
   const [isCritical, setIsCritical] = useState(false);
   const [showPinModal, setShowPinModal] = useState(false);
-  
-  // NUEVO: Estado del buscador
   const [searchTerm, setSearchTerm] = useState('');
 
-  // 1. MIS MAQUINAS
-  const myMachines = machines.filter(m => m.operatorId === user.id);
+  // Filtros de Máquinas (Ignoramos las 'STOPPED' para que no molesten)
+  const myMachines = machines.filter(m => m.operatorId === user.id && m.status !== 'STOPPED');
   
-  // 2. BUSCADOR GENERAL (Para operar equipos de otros)
   const otherMachines = machines.filter(m => 
     m.operatorId !== user.id && 
+    m.status !== 'STOPPED' &&
+    !isPast(addDays(safeDate(m.lastOperatorDate), m.operatorInterval || 15)) &&
     (m.name || '').toLowerCase().includes(searchTerm.toLowerCase())
+  );
+  
+  const alertMachines = machines.filter(m => 
+    m.operatorId !== user.id && 
+    m.status !== 'STOPPED' &&
+    isPast(addDays(safeDate(m.lastOperatorDate), m.operatorInterval || 15))
   );
 
   const handleCheck = (itemId: string, status: string) => { 
@@ -390,13 +397,11 @@ const OperatorView: React.FC<{ user: User; machines: ExtendedMachine[]; records:
       }); 
   };
   
-  // FILTRADO INTELIGENTE DE CHECKLIST
+  // Filtro de Items del Checklist
   const myChecklistItems = checklistItems.filter(i => {
     if (i.roleTarget !== Role.OPERATOR) return false;
-    // Si la máquina tiene tipo se usa, sino es MAQUINA por defecto
     const currentMachineType = selectedMachine?.assetType || 'MAQUINA';
-    const itemTarget = i.targetType || 'ALL'; // Si el item no tiene tipo, es ALL
-
+    const itemTarget = i.targetType || 'ALL';
     return itemTarget === 'ALL' || itemTarget === currentMachineType;
   });
 
@@ -414,8 +419,10 @@ const OperatorView: React.FC<{ user: User; machines: ExtendedMachine[]; records:
       
       // INCORPORAR DATOS DE VEHÍCULO A LA OBSERVACIÓN
       let fullObs = `[PARADA: ${downtime} min] [CHECKLIST: ${checklistText}] ${obs}`;
+      
+      // Si es vehículo y completó docs, lo agregamos
       if (selectedMachine.assetType === 'VEHICULO' && vehicleDocs) {
-          fullObs += ` [DOCS/KM: ${vehicleDocs}]`;
+          fullObs += ` | [DOCS/KM: ${vehicleDocs}]`;
       }
 
       await addDoc(collection(db, "records"), { 
@@ -433,7 +440,7 @@ const OperatorView: React.FC<{ user: User; machines: ExtendedMachine[]; records:
       setSelectedMachine(null); 
       setIsCritical(false); 
       setObs(''); 
-      setVehicleDocs(''); // Resetear campo
+      setVehicleDocs(''); 
       setChecklistStatus({}); 
       setDowntime(0); 
       setShowPinModal(false); 
@@ -480,10 +487,12 @@ const OperatorView: React.FC<{ user: User; machines: ExtendedMachine[]; records:
             ))}
         </div>
 
-        {/* CAMPO DE DOCUMENTACION SOLO PARA VEHICULOS */}
+        {/* CAMPO DE DOCUMENTACION SOLO PARA VEHICULOS (Usando icono FileText que ya tienes) */}
         {isVehicle && (
              <div className="mb-8 bg-blue-50 p-6 rounded-[2rem] border border-blue-100">
-                <h4 className="text-blue-800 font-black uppercase text-sm mb-4 flex items-center gap-2"><FileBadge className="w-5 h-5"/> Documentación & Kilometraje</h4>
+                <h4 className="text-blue-800 font-black uppercase text-sm mb-4 flex items-center gap-2">
+                    <FileText className="w-5 h-5"/> Documentación & Kilometraje
+                </h4>
                 <textarea className="w-full p-4 border border-blue-200 rounded-2xl outline-none focus:border-blue-500 font-medium text-sm h-24" placeholder="Ej: Seguro al día, VTV vence en 2 meses. KM Actual: 150.000" value={vehicleDocs} onChange={e => setVehicleDocs(e.target.value)} />
              </div>
         )}
@@ -498,7 +507,7 @@ const OperatorView: React.FC<{ user: User; machines: ExtendedMachine[]; records:
 
   return (
     <div className="space-y-12">
-      <div className="flex flex-col md:flex-row justify-between items-end gap-8"><div><h2 className="text-4xl md:text-5xl font-black text-slate-900 uppercase tracking-tighter leading-none">Mi Panel</h2><p className="text-slate-400 font-bold uppercase text-[10px] tracking-widest mt-3">Estado de Máquinas</p></div><div className="w-full md:w-96"><MiniCalendar machines={machines} records={records} user={user} mode="OPERATOR" /></div></div>
+      <div className="flex flex-col md:flex-row justify-between items-end gap-8"><div><h2 className="text-4xl md:text-5xl font-black text-slate-900 uppercase tracking-tighter leading-none">Mi Panel</h2><p className="text-slate-400 font-bold uppercase text-[10px] tracking-widest mt-3">Estado de Máquinas</p></div><div className="w-full md:w-96"><MiniCalendar machines={machines} records={records} user={user} users={users} mode="OPERATOR" /></div></div>
       
       {/* SECCION 1: MIS ACTIVOS FIJOS */}
       {myMachines.length > 0 && (
@@ -511,6 +520,7 @@ const OperatorView: React.FC<{ user: User; machines: ExtendedMachine[]; records:
                         <Card key={m.id} className={`${isDue ? 'border-red-500 shadow-red-100' : 'border-emerald-500 shadow-emerald-100'} cursor-pointer hover:scale-[1.02] transition-transform`} onClick={() => { setSelectedMachine(m); setChecklistStatus({}); }}>
                             <div className="flex justify-between mb-4">
                                 <div className={`p-3 rounded-2xl ${isDue ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-600'}`}>
+                                    {/* ICONO DINAMICO */}
                                     {m.assetType === 'VEHICULO' ? <Truck className="w-6 h-6"/> : <Wrench className="w-6 h-6" />}
                                 </div>
                                 {isDue && <span className="text-[9px] font-black bg-red-600 text-white px-3 py-1 rounded-full animate-pulse uppercase tracking-widest">Atención Requerida</span>}
@@ -521,6 +531,28 @@ const OperatorView: React.FC<{ user: User; machines: ExtendedMachine[]; records:
                     ); 
                 })}
             </div>
+        </div>
+      )}
+
+      {/* SECCION 2: ALERTAS DE PLANTA */}
+      {alertMachines.length > 0 && (
+        <div className="space-y-6 pt-12 border-t border-slate-200">
+             <h3 className="text-xl font-black text-red-600 uppercase flex items-center gap-3 animate-pulse"><AlertTriangle /> Mantenimiento Vencido (General)</h3>
+             <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6">
+                {alertMachines.map(m => {
+                    const respUser = users.find(u => u.id === m.operatorId);
+                    return (
+                        <div key={m.id} onClick={() => { setSelectedMachine(m); setChecklistStatus({}); }} className="bg-red-50 p-6 rounded-3xl border border-red-200 cursor-pointer hover:shadow-xl transition-all flex flex-col justify-between items-start group">
+                            <div className="flex justify-between w-full mb-4">
+                                <div className="bg-white p-2 rounded-xl text-red-500"><Wrench className="w-5 h-5" /></div>
+                                <span className="text-[9px] bg-red-200 text-red-800 px-2 py-1 rounded font-bold uppercase">Vencido</span>
+                            </div>
+                            <p className="font-black text-slate-800 uppercase tracking-tighter leading-none mb-2">{m.name}</p>
+                            <p className="text-[9px] font-black text-red-400 uppercase tracking-widest">Resp: {respUser ? respUser.name : 'Sin Asignar'}</p>
+                        </div>
+                    );
+                })}
+             </div>
         </div>
       )}
 
@@ -550,7 +582,6 @@ const OperatorView: React.FC<{ user: User; machines: ExtendedMachine[]; records:
                           </div>
                       );
                   })}
-                  {otherMachines.length === 0 && <p className="text-slate-400 text-sm italic col-span-full">No se encontraron equipos disponibles con ese nombre.</p>}
               </div>
           )}
       </div>
