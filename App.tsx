@@ -4,7 +4,8 @@ import {
   MessageSquare, ClipboardList, Database, Plus, UserPlus, History, HardDrive, 
   UserCog, LayoutDashboard, X, Calendar as CalendarIcon, Filter, Trophy, Search, Lock, Fingerprint, Loader2,
   Trash2, Pencil, FileSpreadsheet, FileText, ChevronLeft, ChevronRight, Clock, Send, Download, Smartphone,
-  ListChecks, Ban, Activity, Timer, TrendingUp, Gauge, CheckSquare, Percent, Truck, Factory, FileCheck, ScanLine, Stethoscope, PauseCircle, PlayCircle
+  ListChecks, Ban, Activity, Timer, TrendingUp, Gauge, CheckSquare, Percent, Truck, Factory, FileCheck, ScanLine, Stethoscope, PauseCircle, PlayCircle,
+  Container, FileBadge // <--- ESTOS ERAN LOS QUE FALTABAN
 } from 'lucide-react';
 import { 
   PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend,
