@@ -474,7 +474,16 @@ const OperatorView: React.FC<{ user: User; users: User[]; machines: ExtendedMach
         {/* INPUT DE MONTACARGA */}
         {isForklift && (<div className="mb-8 bg-amber-50 p-6 rounded-[2rem] border border-amber-100"><h4 className="text-amber-800 font-black uppercase text-sm mb-4 flex items-center gap-2"><Clock className="w-5 h-5"/> Horómetro (Horas Motor)</h4><input type="number" className="w-full p-4 border border-amber-200 rounded-2xl outline-none focus:border-amber-500 font-bold text-lg" placeholder="Ej: 12500" value={engineHours} onChange={e => setEngineHours(e.target.value)} /></div>)}
 
-        <div className="mb-8"><label className="text-[10px] font-black uppercase text-slate-400 ml-2">Tiempo Parada (Min)</label><input type="number" className="w-full p-4 border-2 border-slate-100 rounded-[2rem] outline-none focus:border-orange-500 font-bold text-xl" value={downtime} onChange={e => setDowntime(parseInt(e.target.value) || 0)} /></div>
+        <div className="mb-8">
+          <label className="text-[10px] font-black uppercase text-slate-400 ml-2">Tiempo Parada (Min)</label>
+          <input 
+            type="number" 
+            className="w-full p-4 border-2 border-slate-100 rounded-[2rem] outline-none focus:border-orange-500 font-bold text-xl placeholder:text-slate-300" 
+            placeholder="0" 
+            value={downtime === 0 ? '' : downtime} 
+            onChange={e => setDowntime(parseInt(e.target.value) || 0)} 
+          />
+        </div>
         <div className={`p-4 md:p-6 rounded-3xl border-2 mb-8 flex items-center gap-5 transition-colors ${isCritical ? 'bg-red-600 border-red-700 text-white' : 'bg-red-50 border-red-100 text-red-600'}`}><input type="checkbox" className="w-6 h-6 md:w-8 md:h-8 accent-white" checked={isCritical} onChange={e => setIsCritical(e.target.checked)} id="critical" /><label htmlFor="critical" className="font-black uppercase text-xs md:text-sm cursor-pointer select-none">⚠️ Reportar Avería</label></div>
         <textarea className="w-full p-6 border-2 border-slate-100 rounded-[2rem] mb-8 h-32 outline-none focus:border-orange-500 font-medium text-lg" placeholder="Observaciones generales..." value={obs} onChange={e => setObs(e.target.value)} />
         <IndustrialButton fullWidth onClick={requestSignature}>Certificar</IndustrialButton>
@@ -642,7 +651,16 @@ const LeaderView: React.FC<{ user: User; machines: ExtendedMachine[]; records: M
                 </div>
             ))}
         </div>
-        <div className="mb-8"><label className="text-[10px] font-black uppercase text-slate-400 ml-2">Tiempo Parada (Min)</label><input type="number" className="w-full p-4 border-2 border-slate-100 rounded-[2rem] outline-none focus:border-amber-500 font-bold text-xl" value={downtime} onChange={e => setDowntime(parseInt(e.target.value) || 0)} /></div>
+        <div className="mb-8">
+          <label className="text-[10px] font-black uppercase text-slate-400 ml-2">Tiempo Parada (Min)</label>
+          <input 
+            type="number" 
+            className="w-full p-4 border-2 border-slate-100 rounded-[2rem] outline-none focus:border-amber-500 font-bold text-xl placeholder:text-slate-300" 
+            placeholder="0" 
+            value={downtime === 0 ? '' : downtime} 
+            onChange={e => setDowntime(parseInt(e.target.value) || 0)} 
+          />
+        </div>
         <textarea className="w-full p-6 border-2 border-slate-100 rounded-[2rem] mb-8 h-32 outline-none focus:border-amber-600 font-medium text-lg" placeholder="Detalles técnicos..." value={mantoObs} onChange={e => setMantoObs(e.target.value)} />
         <IndustrialButton variant="secondary" fullWidth onClick={() => { if (!selectedMachine) return; setShowPinModal(true); }}>Firmar Mantenimiento Experto</IndustrialButton>
       </Card>
