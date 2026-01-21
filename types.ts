@@ -1,8 +1,8 @@
-
 export enum Role {
   OPERATOR = 'OPERARIO',
   LEADER = 'LÍDER MANTENIMIENTO',
-  MANAGER = 'GERENCIA'
+  MANAGER = 'GERENCIA',
+  SUPERVISOR = 'SUPERVISOR' // <--- NUEVO: Rol para Supervisor de Planta
 }
 
 export enum MaintenanceType {
@@ -15,6 +15,7 @@ export interface User {
   name: string;
   role: Role;
   phone?: string;
+  pin?: string; // <--- NUEVO: Campo para la contraseña del Supervisor/Operario
 }
 
 export interface Machine {
@@ -33,4 +34,5 @@ export interface MaintenanceRecord {
   observations: string;
   type: MaintenanceType;
   isIssue: boolean;
+  downtime?: number; // <--- Asegúrate de tener este también si usas tiempos de parada
 }
