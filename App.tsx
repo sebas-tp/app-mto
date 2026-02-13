@@ -23,16 +23,17 @@ import {
   collection, doc, addDoc, updateDoc, deleteDoc, onSnapshot, query, orderBy, setDoc 
 } from 'firebase/firestore';
 
-// --- TYPES (INTEGRADOS PARA EVITAR ERRORES) ---
+// --- DEFINICIÓN DE TIPOS (INTEGRADA) ---
 export enum Role {
-  OPERATOR = 'OPERARIO',
-  LEADER = 'LÍDER MANTENIMIENTO',
-  MANAGER = 'GERENCIA'
+  OPERATOR = 'OPERATOR',
+  LEADER = 'LEADER',
+  MANAGER = 'MANAGER',
+  SUPERVISOR = 'SUPERVISOR'
 }
 
 export enum MaintenanceType {
-  LIGHT = 'Liviano',
-  HEAVY = 'Pesado'
+  LIGHT = 'LIGHT',
+  HEAVY = 'HEAVY'
 }
 
 export interface User {
@@ -40,7 +41,7 @@ export interface User {
   name: string;
   role: Role;
   phone?: string;
-  pin?: string; // Agregado PIN
+  pin?: string; 
 }
 
 export interface Machine {
@@ -52,8 +53,15 @@ export interface Machine {
   lastLeaderDate: string;   
   operatorId?: string | null; 
   leaderId?: string | null;   
-  assetType?: 'MAQUINA' | 'VEHICULO' | 'MONTACARGA'; 
-  status?: 'ACTIVE' | 'STOPPED';
+  assignedTo?: string | null; 
+}
+
+type AssetType = 'MAQUINA' | 'VEHICULO' | 'MONTACARGA';
+type MachineStatus = 'ACTIVE' | 'STOPPED';
+
+interface ExtendedMachine extends Machine {
+  assetType?: AssetType; 
+  status?: MachineStatus; 
 }
 
 export interface MaintenanceRecord {
@@ -71,12 +79,7 @@ interface ChecklistItem {
   id: string;
   label: string;
   roleTarget: Role; 
-  targetType: 'MAQUINA' | 'VEHICULO' | 'MONTACARGA' | 'ALL';
-}
-
-interface ExtendedMachine extends Machine {
-  assetType?: 'MAQUINA' | 'VEHICULO' | 'MONTACARGA'; 
-  status?: 'ACTIVE' | 'STOPPED'; 
+  targetType: AssetType | 'ALL';
 }
 
 // --- HELPER SEGURO PARA FECHAS ---
@@ -165,8 +168,6 @@ const MiniCalendar: React.FC<{ machines: ExtendedMachine[], records: Maintenance
   
   const getDayStatus = (date: Date) => {
     const dayRecords = records.filter(r => isSameDay(safeDate(r.date), date) && (mode === 'MANAGER' || r.userId === user?.id));
-    
-    // FILTRO IMPORTANTE: Solo máquinas ACTIVAS cuentan para los puntos del calendario
     const activeMachines = machines.filter(m => m.status !== 'STOPPED');
 
     const isPending = activeMachines.some(m => {
@@ -190,8 +191,6 @@ const MiniCalendar: React.FC<{ machines: ExtendedMachine[], records: Maintenance
   const getDetails = (date: Date) => {
     const done = records.filter(r => isSameDay(safeDate(r.date), date) && (mode === 'MANAGER' || r.userId === user?.id));
     let pending: any[] = [];
-    
-    // FILTRO: Solo mostramos pendientes de máquinas ACTIVAS
     const activeMachines = machines.filter(m => m.status !== 'STOPPED');
 
     activeMachines.forEach(m => {
@@ -318,7 +317,6 @@ const OperatorView: React.FC<{ user: User; users: User[]; machines: ExtendedMach
     try { 
       const checklistText = Object.entries(checklistStatus).map(([id, s]) => `${checklistItems.find(i => i.id === id)?.label}: ${s}`).join(', ');
       
-      // ARMADO DE OBSERVACIONES SEGUN TIPO
       let fullObs = `[PARADA: ${downtime} min] [CHECKLIST: ${checklistText}] ${obs}`;
       
       if (selectedMachine.assetType === 'VEHICULO' && vehicleDocs) {
@@ -358,7 +356,6 @@ const OperatorView: React.FC<{ user: User; users: User[]; machines: ExtendedMach
                     <span className="text-sm font-bold text-slate-700 w-full sm:w-1/2">{item.label}</span>
                     <div className="flex gap-2 flex-wrap sm:flex-nowrap justify-end">
                         <button onClick={() => handleCheck(item.id, 'NA')} className={`px-3 py-2 rounded-xl text-[10px] font-black transition-all ${checklistStatus[item.id] === 'NA' ? 'bg-slate-600 text-white' : 'bg-slate-100 text-slate-400 hover:bg-slate-200'}`}>N/A</button>
-                        
                         {(isVehicle || isForklift) ? (
                             <>
                                 <button onClick={() => handleCheck(item.id, 'DEFICIENTE')} className={`px-3 py-2 rounded-xl text-[10px] font-black transition-all ${checklistStatus[item.id] === 'DEFICIENTE' ? 'bg-amber-500 text-white shadow-amber-200 shadow-lg' : 'bg-slate-100 text-slate-400 hover:bg-amber-100 hover:text-amber-600'}`}>DEFICIENTE</button>
@@ -372,24 +369,20 @@ const OperatorView: React.FC<{ user: User; users: User[]; machines: ExtendedMach
             ))}
         </div>
 
-        {/* INPUTS ESPECIFICOS */}
         {isVehicle && (<div className="mb-8 bg-blue-50 p-6 rounded-[2rem] border border-blue-100"><h4 className="text-blue-800 font-black uppercase text-sm mb-4 flex items-center gap-2"><FileBadge className="w-5 h-5"/> Documentación & Kilometraje</h4><textarea className="w-full p-4 border border-blue-200 rounded-2xl outline-none focus:border-blue-500 font-medium text-sm h-24" placeholder="Ej: Seguro al día. KM Actual: 150.000" value={vehicleDocs} onChange={e => setVehicleDocs(e.target.value)} /></div>)}
         
-        {/* INPUT DE MONTACARGA */}
         {isForklift && (<div className="mb-8 bg-amber-50 p-6 rounded-[2rem] border border-amber-100"><h4 className="text-amber-800 font-black uppercase text-sm mb-4 flex items-center gap-2"><Clock className="w-5 h-5"/> Horómetro (Horas Motor)</h4><input type="number" className="w-full p-4 border border-amber-200 rounded-2xl outline-none focus:border-amber-500 font-bold text-lg" placeholder="Ej: 12500" value={engineHours} onChange={e => setEngineHours(e.target.value)} /></div>)}
 
-        {/* --- MEJORA VISUAL INPUT "0" --- */}
         <div className="mb-8">
-            <label className="text-[10px] font-black uppercase text-slate-400 ml-2">Tiempo Parada (Min)</label>
-            <input 
-                type="number" 
-                className="w-full p-4 border-2 border-slate-100 rounded-[2rem] outline-none focus:border-orange-500 font-bold text-xl placeholder:text-slate-300"
-                placeholder="0" // Se ve un 0 gris pero no molesta
-                value={downtime === 0 ? '' : downtime} // Si es 0 se ve vacío
-                onChange={e => setDowntime(parseInt(e.target.value) || 0)} 
-            />
+          <label className="text-[10px] font-black uppercase text-slate-400 ml-2">Tiempo Parada (Min)</label>
+          <input 
+            type="number" 
+            className="w-full p-4 border-2 border-slate-100 rounded-[2rem] outline-none focus:border-orange-500 font-bold text-xl placeholder:text-slate-300" 
+            placeholder="0" 
+            value={downtime === 0 ? '' : downtime} 
+            onChange={e => setDowntime(parseInt(e.target.value) || 0)} 
+          />
         </div>
-
         <div className={`p-4 md:p-6 rounded-3xl border-2 mb-8 flex items-center gap-5 transition-colors ${isCritical ? 'bg-red-600 border-red-700 text-white' : 'bg-red-50 border-red-100 text-red-600'}`}><input type="checkbox" className="w-6 h-6 md:w-8 md:h-8 accent-white" checked={isCritical} onChange={e => setIsCritical(e.target.checked)} id="critical" /><label htmlFor="critical" className="font-black uppercase text-xs md:text-sm cursor-pointer select-none">⚠️ Reportar Avería</label></div>
         <textarea className="w-full p-6 border-2 border-slate-100 rounded-[2rem] mb-8 h-32 outline-none focus:border-orange-500 font-medium text-lg" placeholder="Observaciones generales..." value={obs} onChange={e => setObs(e.target.value)} />
         <IndustrialButton fullWidth onClick={requestSignature}>Certificar</IndustrialButton>
@@ -401,7 +394,6 @@ const OperatorView: React.FC<{ user: User; users: User[]; machines: ExtendedMach
     <div className="space-y-12">
       <div className="flex flex-col md:flex-row justify-between items-end gap-8"><div><h2 className="text-4xl md:text-5xl font-black text-slate-900 uppercase tracking-tighter leading-none">Mi Panel</h2><p className="text-slate-400 font-bold uppercase text-[10px] tracking-widest mt-3">Estado de Máquinas</p></div><div className="w-full md:w-96"><MiniCalendar machines={machines} records={records} user={user} users={users} mode="OPERATOR" /></div></div>
       
-      {/* LISTA DE ACTIVOS */}
       {myMachines.length > 0 && (
         <div className="space-y-6">
             <h3 className="text-xl font-black text-slate-800 uppercase flex items-center gap-3"><UserCog className="text-orange-600" /> Mis Responsabilidades</h3>
@@ -412,7 +404,6 @@ const OperatorView: React.FC<{ user: User; users: User[]; machines: ExtendedMach
                         <Card key={m.id} className={`${isDue ? 'border-red-500 shadow-red-100' : 'border-emerald-500 shadow-emerald-100'} cursor-pointer hover:scale-[1.02] transition-transform`} onClick={() => { setSelectedMachine(m); setChecklistStatus({}); }}>
                             <div className="flex justify-between mb-4">
                                 <div className={`p-3 rounded-2xl ${isDue ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-600'}`}>
-                                    {/* ICONO DINAMICO */}
                                     {m.assetType === 'VEHICULO' ? <Truck className="w-6 h-6"/> : m.assetType === 'MONTACARGA' ? <Container className="w-6 h-6"/> : <Wrench className="w-6 h-6" />}
                                 </div>
                                 {isDue && <span className="text-[9px] font-black bg-red-600 text-white px-3 py-1 rounded-full animate-pulse uppercase tracking-widest">Atención Requerida</span>}
@@ -426,7 +417,6 @@ const OperatorView: React.FC<{ user: User; users: User[]; machines: ExtendedMach
         </div>
       )}
 
-      {/* ALERTAS */}
       {alertMachines.length > 0 && (
         <div className="space-y-6 pt-12 border-t border-slate-200">
              <h3 className="text-xl font-black text-red-600 uppercase flex items-center gap-3 animate-pulse"><AlertTriangle /> Mantenimiento Vencido (General)</h3>
@@ -448,7 +438,6 @@ const OperatorView: React.FC<{ user: User; users: User[]; machines: ExtendedMach
         </div>
       )}
 
-      {/* BUSCADOR */}
       <div className="space-y-6 pt-12 border-t border-slate-200">
           <div className="flex flex-col md:flex-row justify-between items-end gap-4">
               <h3 className="text-xl font-black text-slate-800 uppercase flex items-center gap-3"><ScanLine className="text-slate-400" /> Operar Otro Equipo</h3>
@@ -491,17 +480,16 @@ const LeaderView: React.FC<{ user: User; machines: ExtendedMachine[]; records: M
   const [showPinModal, setShowPinModal] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
 
-  // ESTADOS PARA URGENCIAS
+  // ESTADOS PARA LA GESTIÓN DE URGENCIAS
   const [closingIssue, setClosingIssue] = useState<MaintenanceRecord | null>(null);
   const [closingComment, setClosingComment] = useState('');
   
-  // ESTADO PARA SABER QUÉ ESTAMOS FIRMANDO
+  // ESTADO PARA SABER QUÉ ESTAMOS FIRMANDO (MANTENIMIENTO O CIERRE DE FALLA)
   const [pinAction, setPinAction] = useState<'MANTO' | 'ISSUE'>('MANTO');
 
   const issues = records.filter(r => r.isIssue);
   
   const heavyDutyDue = machines.filter(m => isPast(addDays(safeDate(m.lastLeaderDate), m.leaderInterval || 30)));
-
   const otherMachines = machines.filter(m => 
     !isPast(addDays(safeDate(m.lastLeaderDate), m.leaderInterval || 30)) &&
     (m.name || '').toLowerCase().includes(searchTerm.toLowerCase())
@@ -516,7 +504,7 @@ const LeaderView: React.FC<{ user: User; machines: ExtendedMachine[]; records: M
 
   const handleCheck = (itemId: string, status: string) => { setChecklistStatus(prev => { if (prev[itemId] === status) { const n = { ...prev }; delete n[itemId]; return n; } return { ...prev, [itemId]: status }; }); };
 
-  // --- SOLICITAR FIRMAS ---
+  // 1. SOLICITAR FIRMA PARA MANTENIMIENTO PREVENTIVO
   const requestMantoSignature = () => {
       const allChecked = myChecklistItems.every(i => checklistStatus[i.id]);
       if (!selectedMachine || !allChecked) return alert("Complete todos los items.");
@@ -524,54 +512,69 @@ const LeaderView: React.FC<{ user: User; machines: ExtendedMachine[]; records: M
       setShowPinModal(true);
   };
 
+  // 2. SOLICITAR FIRMA PARA CERRAR FALLA (NUEVO)
   const requestIssueSignature = () => {
-      if(!closingComment) return alert("Debe ingresar comentario.");
+      if(!closingComment) return alert("Debe ingresar el detalle de la solución.");
       setPinAction('ISSUE');
       setShowPinModal(true);
   };
-  
-  // --- PROCESO DE GUARDADO (CON MEJORA DE AUDITORÍA) ---
+
+  // 3. PROCESO DE GUARDADO (CON LA MEJORA DE AUDITORÍA)
   const handlePinConfirm = async (pin: string) => {
     if (pin !== user.pin) return alert("ERROR: PIN inválido.");
-    
+
     try {
-        // CASO A: MANTENIMIENTO PREVENTIVO
+        // OPCIÓN A: Guardar Mantenimiento Normal
         if (pinAction === 'MANTO' && selectedMachine) {
             const checklistText = Object.entries(checklistStatus).map(([id, s]) => `${checklistItems.find(i => i.id === id)?.label}: ${s}`).join(', ');
             const fullObs = `[PARADA: ${downtime} min] [CHECKLIST: ${checklistText}] ${mantoObs}`;
-            await addDoc(collection(db, "records"), { machineId: selectedMachine.id, userId: user.id, date: new Date().toISOString(), observations: fullObs, type: MaintenanceType.HEAVY, isIssue: false, downtime: downtime });
+            
+            await addDoc(collection(db, "records"), { 
+                machineId: selectedMachine.id, 
+                userId: user.id, 
+                date: new Date().toISOString(), 
+                observations: fullObs, 
+                type: MaintenanceType.HEAVY, 
+                isIssue: false, 
+                downtime: downtime 
+            });
             await updateDoc(doc(db, "machines", selectedMachine.id), { lastLeaderDate: new Date().toISOString() });
+            
             setSelectedMachine(null); setChecklistStatus({}); setMantoObs(''); setDowntime(0);
             alert("Mantenimiento Certificado.");
         } 
-        // CASO B: CIERRE DE FALLA (CREA NUEVO REGISTRO)
+        
+        // OPCIÓN B: Cerrar Falla (ACÁ ESTÁ LA MEJORA)
         else if (pinAction === 'ISSUE' && closingIssue) {
-            // 1. Apagamos la alerta roja original
+            // 1. Quitamos la alerta roja del registro original (pero NO le cambiamos el texto, para que quede el reporte original)
             await updateDoc(doc(db, "records", closingIssue.id), { isIssue: false });
 
-            // 2. Creamos un nuevo registro de "Solución" en la auditoría
+            // 2. CREAMOS UN REGISTRO NUEVO (Esto es lo que pediste)
+            // Esto aparecerá como un renglón nuevo en la auditoría con tu nombre y lo que hiciste.
             await addDoc(collection(db, "records"), { 
                 machineId: closingIssue.machineId, 
-                userId: user.id, // Queda registrado el Líder
-                date: new Date().toISOString(), // Fecha actual
-                type: MaintenanceType.HEAVY, 
-                isIssue: false, 
-                downtime: 0,
-                observations: `✅ SOLUCIÓN LÍDER: ${closingComment} (Ref. Falla: "${closingIssue.observations}")` 
+                userId: user.id, // Queda registrado TU usuario (Líder)
+                date: new Date().toISOString(), // Fecha actual de la solución
+                observations: `✅ SOLUCIÓN LÍDER: ${closingComment} (Ref. Falla: "${closingIssue.observations}")`, // Texto claro
+                type: MaintenanceType.HEAVY, // Cuenta como trabajo pesado/técnico
+                isIssue: false, // Es una solución, no un problema
+                downtime: 0 
             });
 
             setClosingIssue(null); setClosingComment('');
-            alert("Solución registrada y firmada.");
+            alert("Solución registrada y firmada correctamente.");
         }
 
         setShowPinModal(false);
-    } catch(e) { console.error(e); }
+    } catch(e) { console.error(e); alert("Error al guardar."); }
   };
 
   if (selectedMachine) {
     return (
       <Card className="max-w-2xl mx-auto border-amber-600 shadow-amber-100/50 relative mb-20">
-        <PinModal isOpen={showPinModal} onClose={() => setShowPinModal(false)} onConfirm={handlePinConfirm} title={pinAction === 'MANTO' ? "Firma Mto. Preventivo" : "Firma Solución"} />
+        {/* El Modal de PIN se reutiliza aquí */}
+        <PinModal isOpen={showPinModal} onClose={() => setShowPinModal(false)} onConfirm={handlePinConfirm} title="Firma de Responsable Técnico" />
+        
         <button onClick={() => setSelectedMachine(null)} className="text-[10px] font-black uppercase text-amber-700 mb-8 flex items-center gap-2 tracking-widest">← Cancelar Operación</button>
         <div className="mb-8">
             <h2 className="text-4xl font-black text-slate-800 uppercase tracking-tighter flex items-center gap-3">
@@ -596,21 +599,19 @@ const LeaderView: React.FC<{ user: User; machines: ExtendedMachine[]; records: M
             ))}
         </div>
         
-        {/* --- MEJORA VISUAL INPUT "0" --- */}
+        {/* INPUT DE TIEMPO SIN CERO MOLESTO */}
         <div className="mb-8">
-            <label className="text-[10px] font-black uppercase text-slate-400 ml-2">Tiempo Parada (Min)</label>
-            <input 
-                type="number" 
-                className="w-full p-4 border-2 border-slate-100 rounded-[2rem] outline-none focus:border-amber-500 font-bold text-xl placeholder:text-slate-300" 
-                placeholder="0"
-                value={downtime === 0 ? '' : downtime} 
-                onChange={e => setDowntime(parseInt(e.target.value) || 0)} 
-            />
+          <label className="text-[10px] font-black uppercase text-slate-400 ml-2">Tiempo Parada (Min)</label>
+          <input 
+            type="number" 
+            className="w-full p-4 border-2 border-slate-100 rounded-[2rem] outline-none focus:border-amber-500 font-bold text-xl placeholder:text-slate-300"
+            placeholder="0" 
+            value={downtime === 0 ? '' : downtime} 
+            onChange={e => setDowntime(parseInt(e.target.value) || 0)} 
+          />
         </div>
 
         <textarea className="w-full p-6 border-2 border-slate-100 rounded-[2rem] mb-8 h-32 outline-none focus:border-amber-600 font-medium text-lg" placeholder="Detalles técnicos..." value={mantoObs} onChange={e => setMantoObs(e.target.value)} />
-        
-        {/* BOTÓN CAMBIADO A REQUEST SIGNATURE */}
         <IndustrialButton variant="secondary" fullWidth onClick={requestMantoSignature}>Firmar Mantenimiento Experto</IndustrialButton>
       </Card>
     );
@@ -619,7 +620,7 @@ const LeaderView: React.FC<{ user: User; machines: ExtendedMachine[]; records: M
   return (
     <div className="space-y-16 relative">
       
-      {/* MODAL DE CIERRE DE INCIDENCIA (AHORA PIDE PIN) */}
+      {/* 1. EL MODAL DE CIERRE AHORA PIDE CONFIRMACIÓN Y MUESTRA EL CAMPO DE SOLUCION */}
       {closingIssue && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4 animate-in fade-in zoom-in duration-200">
             <Card className="w-full max-w-lg">
@@ -627,19 +628,16 @@ const LeaderView: React.FC<{ user: User; machines: ExtendedMachine[]; records: M
                 <p className="text-sm font-bold text-slate-500 uppercase mb-4">Resolución de falla en: <span className="text-slate-900">{machines.find(m => m.id === closingIssue.machineId)?.name}</span></p>
                 <div className="bg-red-50 p-4 rounded-xl border border-red-100 mb-6"><p className="text-[10px] text-red-400 font-black uppercase mb-1">Reporte Original:</p><p className="text-red-800 italic font-medium">"{closingIssue.observations}"</p></div>
                 <textarea autoFocus className="w-full p-4 bg-slate-50 border-2 border-slate-200 rounded-2xl mb-6 outline-none focus:border-orange-500 font-medium" placeholder="Solución aplicada..." rows={4} value={closingComment} onChange={e => setClosingComment(e.target.value)} />
-                
-                {/* BOTÓN QUE ABRE EL PIN */}
                 <IndustrialButton fullWidth onClick={requestIssueSignature}>Confirmar y Firmar</IndustrialButton>
             </Card>
         </div>
       )}
       
-      {/* EL MODAL DE PIN SE RENDERIZA AQUI */}
+      {/* 2. MODAL DE PIN GLOBAL PARA ESTA VISTA */}
       <PinModal isOpen={showPinModal} onClose={() => setShowPinModal(false)} onConfirm={handlePinConfirm} title={pinAction === 'MANTO' ? "Firma Mantenimiento" : "Firma Solución Falla"} />
 
       <div className="flex flex-col md:flex-row justify-between items-end gap-8"><div><h2 className="text-4xl md:text-5xl font-black text-slate-900 uppercase tracking-tighter leading-none">Resp. Mantenimiento <span className="text-orange-600">Gral.</span></h2><p className="text-slate-400 font-bold uppercase text-[10px] tracking-widest mt-3">Supervisión de Línea y Equipos Críticos</p></div><div className="w-full md:w-96"><MiniCalendar machines={machines} records={records} user={user} mode="OPERATOR" /></div></div>
       
-      {/* 1. ALERTAS DE CAMPO (AVERIAS) */}
       {issues.length > 0 && (
         <div className="space-y-6">
             <h3 className="text-xl font-black text-red-600 uppercase flex items-center gap-3 animate-pulse"><AlertTriangle /> Urgencias de Planta</h3>
@@ -666,7 +664,6 @@ const LeaderView: React.FC<{ user: User; machines: ExtendedMachine[]; records: M
                     <div key={m.id} onClick={() => { setSelectedMachine(m); setChecklistStatus({}); }} className={`p-6 rounded-3xl border cursor-pointer hover:shadow-xl transition-all flex flex-col justify-between items-start group ${m.status === 'STOPPED' ? 'bg-slate-50 border-slate-200 opacity-70' : 'bg-amber-50 border-amber-200'}`}>
                         <div className="flex justify-between w-full mb-4">
                             <div className="bg-white p-2 rounded-xl text-amber-600"><Wrench className="w-5 h-5" /></div>
-                            {/* CAMBIO VISUAL: SI ESTÁ PARADA, AVISA */}
                             {m.status === 'STOPPED' 
                                 ? <span className="text-[9px] bg-slate-200 text-slate-600 px-2 py-1 rounded font-bold uppercase flex items-center gap-1"><PauseCircle className="w-3 h-3"/> Parada</span>
                                 : <span className="text-[9px] bg-amber-200 text-amber-800 px-2 py-1 rounded font-bold uppercase">Pendiente</span>
@@ -744,9 +741,7 @@ const ManagerView: React.FC<{ users: User[]; machines: ExtendedMachine[]; record
     const totalAssets = filteredMachines.length;
     const totalTasks = filteredRecordsForStats.length;
     const totalDowntime = filteredRecordsForStats.reduce((acc, r) => acc + (r.downtime || 0), 0);
-    const minutesInMonth = 30 * 24 * 60;
-    const totalAvailableTime = totalAssets * minutesInMonth; 
-    const efficiency = totalAvailableTime > 0 ? Math.max(0, Math.round(((totalAvailableTime - totalDowntime) / totalAvailableTime) * 100)) : 100;
+    const efficiency = totalAssets * 30 * 24 * 60 > 0 ? Math.max(0, Math.round(((totalAssets * 30 * 24 * 60 - totalDowntime) / (totalAssets * 30 * 24 * 60)) * 100)) : 100;
     const compliantMachines = filteredMachines.filter(m => {
         const opDue = isPast(addDays(safeDate(m.lastOperatorDate), m.operatorInterval || 15)) && !isToday(addDays(safeDate(m.lastOperatorDate), m.operatorInterval || 15));
         const ldDue = isPast(addDays(safeDate(m.lastLeaderDate), m.leaderInterval || 30)) && !isToday(addDays(safeDate(m.lastLeaderDate), m.leaderInterval || 30));
@@ -766,7 +761,6 @@ const ManagerView: React.FC<{ users: User[]; machines: ExtendedMachine[]; record
       return [{ name: 'Operativo', value: total - due, color: '#10b981' }, { name: 'Vencido', value: due, color: '#ef4444' }]; 
   }, [filteredMachines]);
 
-  // TREND CHART
   const trendData = useMemo(() => {
     const grouped = filteredRecordsForStats.reduce((acc: any, r) => {
         const date = r.date.slice(0, 10);
@@ -790,7 +784,6 @@ const ManagerView: React.FC<{ users: User[]; machines: ExtendedMachine[]; record
 
   const filteredRecords = useMemo(() => { return records.filter(r => { const matchUser = historyFilter.userId === 'ALL' || r.userId === historyFilter.userId; let matchDate = true; if (historyFilter.dateFrom && historyFilter.dateTo) { matchDate = isWithinInterval(safeDate(r.date), { start: startOfDay(parseISO(historyFilter.dateFrom)), end: endOfDay(parseISO(historyFilter.dateTo)) }); } const matchType = historyFilter.type === 'ALL' ? true : historyFilter.type === 'ISSUE' ? r.isIssue : !r.isIssue; return matchUser && matchDate && matchType; }).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()); }, [records, historyFilter]);
 
-  // EXPORT, PRINT, WHATSAPP (Same as before)
   const exportToCSV = () => {
     const headers = "Fecha,Hora,Maquina,Usuario,Tipo,Observaciones\n";
     const rows = filteredRecords.map(r => {
@@ -877,17 +870,18 @@ const ManagerView: React.FC<{ users: User[]; machines: ExtendedMachine[]; record
     }
   };
 
-  // --- PARSER VISUAL DE AUDITORÍA (NUEVO) ---
+  // --- PARSER VISUAL DE AUDITORÍA (AGREGADO) ---
   const AuditParser = ({ text }: { text: string }) => {
     if (!text) return null;
     
+    // Regex para detectar la solución del líder
+    const solucionMatch = text.match(/✅ SOLUCIÓN LÍDER: (.*?) \(Ref/); 
+
+    // Regex para el resto de los campos
     const checklistMatch = text.match(/\[CHECKLIST: (.*?)\]/);
     const docsMatch = text.match(/\[DOCS\/KM: (.*?)\]/);
     const horasMatch = text.match(/\[HORAS MOTOR: (.*?)\]/);
     const paradaMatch = text.match(/\[PARADA: (.*?) min\]/);
-    
-    // Detectamos si es una solución de líder
-    const solucionMatch = text.match(/✅ SOLUCIÓN LÍDER: (.*?) \(Ref/); 
 
     let cleanObs = text
       .replace(/\[CHECKLIST: .*?\]/, '')
@@ -897,12 +891,14 @@ const ManagerView: React.FC<{ users: User[]; machines: ExtendedMachine[]; record
       .replace(/✅ SOLUCIÓN LÍDER: .*? \(Ref.*?\)/, '') 
       .trim();
 
-    // Si es un registro de SOLUCIÓN, mostramos eso destacado
+    // Si es un registro de SOLUCIÓN, lo mostramos destacado
     if (text.includes("✅ SOLUCIÓN LÍDER:")) {
+        const solutionText = text.split('(Ref. Falla:')[0].replace('✅ SOLUCIÓN LÍDER:', '').trim();
         return (
             <div className="bg-emerald-50 p-3 rounded-xl border border-emerald-100">
                 <p className="text-[10px] font-black text-emerald-600 uppercase mb-1">🔧 Acción Correctiva:</p>
-                <p className="text-sm font-bold text-emerald-800 italic">"{text.split('Ref. Falla')[0].replace('✅ SOLUCIÓN LÍDER:', '').trim()}"</p>
+                <p className="text-sm font-bold text-emerald-800 italic">"{solutionText}"</p>
+                <p className="text-[9px] text-emerald-400 mt-2">Este registro cierra una incidencia anterior.</p>
             </div>
         );
     }
@@ -1088,62 +1084,9 @@ const ManagerView: React.FC<{ users: User[]; machines: ExtendedMachine[]; record
       </div>)}
       
       {activePanel === 'HISTORY' && (<div className="space-y-8 animate-in fade-in zoom-in duration-300"><Card className="bg-slate-900 text-white border-none shadow-2xl shadow-slate-400/20 no-print"><div className="flex flex-col md:flex-row gap-6 items-end"><div className="w-full md:w-1/4 space-y-2"><label className="text-[10px] font-black uppercase text-slate-400 flex gap-2"><CalendarIcon className="w-3 h-3"/> Desde</label><input type="date" className="w-full bg-slate-800 border border-slate-700 rounded-xl p-3 text-sm font-bold outline-none focus:border-orange-500 text-white" value={historyFilter.dateFrom} onChange={e => setHistoryFilter({...historyFilter, dateFrom: e.target.value})} /></div><div className="w-full md:w-1/4 space-y-2"><label className="text-[10px] font-black uppercase text-slate-400 flex gap-2"><CalendarIcon className="w-3 h-3"/> Hasta</label><input type="date" className="w-full bg-slate-800 border border-slate-700 rounded-xl p-3 text-sm font-bold outline-none focus:border-orange-500 text-white" value={historyFilter.dateTo} onChange={e => setHistoryFilter({...historyFilter, dateTo: e.target.value})} /></div><div className="w-full md:w-1/4 space-y-2"><label className="text-[10px] font-black uppercase text-slate-400 flex gap-2"><UserCog className="w-3 h-3"/> Empleado</label><select className="w-full bg-slate-800 border border-slate-700 rounded-xl p-3 text-sm font-bold outline-none focus:border-orange-500 text-white cursor-pointer appearance-none" value={historyFilter.userId} onChange={e => setHistoryFilter({...historyFilter, userId: e.target.value})}><option value="ALL">Todos los Usuarios</option>{users.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}</select></div><div className="w-full md:w-1/4 space-y-2"><label className="text-[10px] font-black uppercase text-slate-400 flex gap-2"><Filter className="w-3 h-3"/> Tipo Registro</label><select className="w-full bg-slate-800 border border-slate-700 rounded-xl p-3 text-sm font-bold outline-none focus:border-orange-500 text-white cursor-pointer appearance-none" value={historyFilter.type} onChange={e => setHistoryFilter({...historyFilter, type: e.target.value})}><option value="ALL">Todo</option><option value="MANTO">Mantenimientos</option><option value="ISSUE">Fallas</option></select></div></div></Card><div className="flex gap-4 justify-end no-print"><IndustrialButton onClick={exportToCSV} variant="success"><FileSpreadsheet className="w-4 h-4"/> Exportar Excel (CSV)</IndustrialButton><IndustrialButton onClick={handlePrint} variant="dark"><FileText className="w-4 h-4"/> Imprimir Reporte PDF</IndustrialButton></div><Card className="p-0 overflow-hidden border-orange-100 print:shadow-none print:border-none"><div className="p-6 hidden print:block"><h1 className="text-3xl font-black uppercase">Reporte de Auditoría TPM</h1><p className="text-sm text-slate-500">Generado el: {format(new Date(), 'dd/MM/yyyy HH:mm')}</p></div><div className="overflow-x-auto"><table className="w-full text-left border-collapse"><thead className="bg-orange-50 text-orange-900 text-[10px] font-black uppercase tracking-widest print:bg-slate-200 print:text-slate-900"><tr><th className="p-6">Fecha</th><th className="p-6">Máquina</th><th className="p-6">Responsable</th><th className="p-6">Detalle</th><th className="p-6 text-center">Tipo</th><th className="p-6 text-center">Acciones</th></tr></thead><tbody className="text-xs font-medium text-slate-600">{filteredRecords.length > 0 ? filteredRecords.map(r => { const user = users.find(u => u.id === r.userId); const machine = machines.find(m => m.id === r.machineId); return (<tr key={r.id} onClick={() => setViewRecord(r)} className="border-b border-slate-100 hover:bg-slate-50 transition-colors group print:border-slate-300 cursor-pointer"><td className="p-6 font-bold whitespace-nowrap text-slate-400 group-hover:text-orange-600 transition-colors print:text-slate-900">{format(safeDate(r.date), 'dd/MM/yyyy HH:mm')}</td><td className="p-6 uppercase font-black text-slate-800">{machine?.name || 'Máquina Eliminada'}</td><td className="p-6"><div className="flex items-center gap-2"><span className="w-6 h-6 rounded-full bg-slate-200 flex items-center justify-center text-[10px] font-black text-slate-500 print:hidden">{(user?.name || '?').charAt(0)}</span><span className="font-bold">{user?.name || 'Usuario Borrado'}</span></div></td><td className="p-6 italic max-w-xs truncate print:whitespace-normal print:overflow-visible" title={r.observations}>{r.observations || <span className="text-slate-300">-</span>}</td><td className="p-6 text-center">{r.isIssue ? <span className="inline-flex items-center gap-1 bg-red-100 text-red-700 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-wider print:border print:border-red-500">Falla</span> : <span className="inline-flex items-center gap-1 bg-emerald-100 text-emerald-700 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-wider print:border print:border-emerald-500">OK</span>}</td><td className="p-6 text-center"><button onClick={(e) => handleDeleteRecord(r.id, e)} className="p-2 bg-slate-100 text-slate-400 hover:bg-red-50 hover:text-red-600 rounded-xl transition-colors"><Trash2 className="w-4 h-4"/></button></td></tr>); }) : <tr><td colSpan={6} className="p-12 text-center text-slate-400 font-bold uppercase text-sm">Sin registros</td></tr>}</tbody></table></div></Card></div>)}
-      
-      {activePanel === 'MACHINES' && (<div className="grid grid-cols-1 lg:grid-cols-3 gap-12 animate-in fade-in duration-300"><Card className="lg:col-span-1 border-orange-200 bg-orange-50/10"><form onSubmit={handleMachineSubmit} className="space-y-6"><h3 className="text-2xl font-black text-slate-800 uppercase tracking-tighter flex items-center gap-3"><Plus className="text-orange-600" /> {editingMachineId ? 'Actualizar Activo' : 'Registro de Activo'}</h3><div className="space-y-2"><label className="text-[10px] font-black uppercase text-slate-400 ml-2">Nombre Técnico</label><input required className="w-full p-5 rounded-2xl border-2 border-slate-100 font-bold outline-none focus:border-orange-500 transition-all shadow-inner" placeholder="Prensa Hidráulica X-10" value={machineForm.name} onChange={e => setMachineForm({...machineForm, name: e.target.value})} /></div><div className="space-y-2"><label className="text-[10px] font-black uppercase text-slate-400 ml-2">Estado del Activo</label><select className="w-full p-5 rounded-2xl border-2 border-slate-100 font-bold outline-none focus:border-orange-500 transition-all shadow-inner" value={machineForm.status || 'ACTIVE'} onChange={(e: any) => setMachineForm({...machineForm, status: e.target.value})}><option value="ACTIVE">🟢 EN PRODUCCIÓN (Activa)</option><option value="STOPPED">🔴 FUERA DE SERVICIO (Parada)</option></select></div><div className="space-y-2"><label className="text-[10px] font-black uppercase text-slate-400 ml-2">Tipo de Activo</label><select className="w-full p-5 rounded-2xl border-2 border-slate-100 font-bold outline-none focus:border-orange-500 transition-all shadow-inner" value={machineForm.assetType} onChange={(e: any) => setMachineForm({...machineForm, assetType: e.target.value})}><option value="MAQUINA">MÁQUINA</option><option value="VEHICULO">VEHÍCULO</option><option value="MONTACARGA">MONTACARGA</option> </select></div><div className="space-y-2"><label className="text-[10px] font-black uppercase text-slate-400 ml-2">Fecha Base / Último Manto</label><input type="date" required className="w-full p-5 rounded-2xl border-2 border-slate-100 font-bold outline-none focus:border-orange-500 transition-all shadow-inner" value={machineForm.baseDate} onChange={e => setMachineForm({...machineForm, baseDate: e.target.value})} /></div><div className="p-4 bg-white rounded-2xl border border-slate-200 space-y-4"><p className="text-xs font-black text-orange-600 uppercase">Manto. Operario (Ligero)</p><div className="space-y-2"><label className="text-[10px] font-black uppercase text-slate-400 ml-2">Asignar a:</label><select className="w-full p-3 rounded-xl border border-slate-200 text-sm font-bold" value={machineForm.operatorId} onChange={e => setMachineForm({...machineForm, operatorId: e.target.value})}><option value="">-- Sin Asignar (Pool/Rotativo) --</option>{users.filter(u => u.role === Role.OPERATOR).map(u => <option key={u.id} value={u.id}>{u.name}</option>)}</select></div><div className="space-y-2"><label className="text-[10px] font-black uppercase text-slate-400 ml-2">Frecuencia (Días)</label><input type="number" required className="w-full p-3 rounded-xl border border-slate-200 text-sm font-bold" value={machineForm.operatorInterval} onChange={e => setMachineForm({...machineForm, operatorInterval: parseInt(e.target.value)})} /></div></div><div className="p-4 bg-white rounded-2xl border border-slate-200 space-y-4"><p className="text-xs font-black text-amber-600 uppercase">Manto. Líder (Pesado)</p><div className="space-y-2"><label className="text-[10px] font-black uppercase text-slate-400 ml-2">Asignar a:</label><select className="w-full p-3 rounded-xl border border-slate-200 text-sm font-bold" value={machineForm.leaderId} onChange={e => setMachineForm({...machineForm, leaderId: e.target.value})}><option value="">-- Sin Asignar --</option>{users.filter(u => u.role === Role.LEADER).map(u => <option key={u.id} value={u.id}>{u.name}</option>)}</select></div><div className="space-y-2"><label className="text-[10px] font-black uppercase text-slate-400 ml-2">Frecuencia (Días)</label><input type="number" required className="w-full p-3 rounded-xl border border-slate-200 text-sm font-bold" value={machineForm.leaderInterval} onChange={e => setMachineForm({...machineForm, leaderInterval: parseInt(e.target.value)})} /></div></div><div className="flex gap-2"><IndustrialButton fullWidth type="submit">{editingMachineId ? 'Guardar Cambios' : 'Dar de Alta'}</IndustrialButton>{editingMachineId && <button type="button" onClick={() => { setEditingMachineId(null); setMachineForm({ name: '', operatorInterval: 15, leaderInterval: 30, operatorId: '', leaderId: '', baseDate: new Date().toISOString().slice(0, 10) } as any); }} className="px-4 font-bold text-slate-400 hover:text-red-500">Cancelar</button>}</div></form></Card><div className="lg:col-span-2"><Card className="p-0 overflow-hidden"><div className="flex items-center gap-2 p-4 bg-slate-100 border-b border-slate-200"><Search className="w-4 h-4 text-slate-400"/><input className="bg-transparent outline-none text-sm font-bold text-slate-700 w-full" placeholder="Buscar activo..." value={machineSearch} onChange={e => setMachineSearch(e.target.value)} /></div><table className="w-full text-left border-collapse"><thead className="bg-slate-900 text-white text-[10px] font-black uppercase tracking-widest"><tr><th className="p-6">Máquina</th><th className="p-6 text-center">Estado</th><th className="p-6 text-center">Ciclos</th><th className="p-6 text-right">Acciones</th></tr></thead><tbody className="text-xs font-bold text-slate-600">{visibleMachinesInList.map(m => (<tr key={m.id} className={`border-b border-slate-100 hover:bg-slate-50 transition-colors ${m.status === 'STOPPED' ? 'opacity-50 bg-slate-50' : ''}`}><td className="p-6 text-slate-900 uppercase font-black tracking-tight flex items-center gap-2">{m.status === 'STOPPED' && <PauseCircle className="w-4 h-4 text-red-400"/>} {m.name}</td><td className="p-6 text-center"><span className={`text-[9px] px-2 py-1 rounded uppercase font-black ${m.status === 'STOPPED' ? 'bg-red-100 text-red-600' : 'bg-emerald-100 text-emerald-600'}`}>{m.status === 'STOPPED' ? 'PARADA' : 'ACTIVA'}</span></td><td className="p-6 text-center"><div className="flex flex-col items-center gap-1"><span className="text-orange-600">Op: {m.operatorInterval}d</span><span className="text-amber-700">Líd: {m.leaderInterval}d</span></div></td><td className="p-6 text-right"><div className="flex items-center justify-end gap-3"><button onClick={() => handleEditMachine(m)} className="text-blue-400 hover:text-blue-600 transition-colors"><Pencil className="w-4 h-4" /></button><button onClick={() => handleDeleteMachine(m.id)} className="text-red-400 hover:text-red-600 transition-colors"><Trash2 className="w-4 h-4" /></button></div></td></tr>))}</tbody></table></Card></div></div>)}
-      
-      {activePanel === 'USERS' && (<div className="grid grid-cols-1 lg:grid-cols-3 gap-12 animate-in fade-in duration-300"><Card className="lg:col-span-1 border-orange-200 bg-orange-50/10"><form onSubmit={addUser} className="space-y-6"><h3 className="text-2xl font-black text-slate-800 uppercase tracking-tighter flex items-center gap-3"><UserPlus className="text-orange-600" /> Nuevo Colaborador</h3><input required className="w-full p-5 rounded-2xl border-2 border-slate-100 font-bold outline-none focus:border-orange-500 transition-all shadow-inner" placeholder="Nombre y Apellido" value={userForm.name} onChange={e => setUserForm({...userForm, name: e.target.value})} /><input className="w-full p-5 rounded-2xl border-2 border-slate-100 font-bold outline-none focus:border-orange-500 transition-all shadow-inner" placeholder="Teléfono" value={userForm.phone} onChange={e => setUserForm({...userForm, phone: e.target.value})} /><div className="space-y-2"><label className="text-[10px] font-black uppercase text-slate-400 ml-2">Asignar PIN de Seguridad</label><input type="password" maxLength={4} className="w-full p-5 rounded-2xl border-2 border-slate-100 font-bold outline-none focus:border-orange-500 transition-all shadow-inner tracking-widest" placeholder="PIN" value={userForm.pin} onChange={e => setUserForm({...userForm, pin: e.target.value.replace(/[^0-9]/g, '')})} /></div><select className="w-full p-5 rounded-2xl border-2 border-slate-100 font-bold outline-none focus:border-orange-500 cursor-pointer shadow-inner" value={userForm.role} onChange={e => setUserForm({...userForm, role: e.target.value as Role})}><option value={Role.OPERATOR}>OPERARIO DE LÍNEA</option><option value={Role.LEADER}>RESP. MANTENIMIENTO GRAL.</option><option value={Role.MANAGER}>GERENCIA Y AUDITORÍA</option></select><IndustrialButton fullWidth type="submit">Alta de Usuario</IndustrialButton></form></Card><div className="lg:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-6">{users.map(u => (<Card key={u.id} className="flex justify-between items-center group border-slate-200 hover:border-orange-400 transition-all"><div className="flex items-center gap-5"><div className="bg-slate-50 p-4 rounded-2xl group-hover:bg-orange-50 group-hover:text-orange-600 transition-colors"><UserCog className="w-6 h-6" /></div><div><h4 className="font-black text-slate-900 uppercase text-sm tracking-tight">{u.name}</h4><span className="text-[9px] font-black text-orange-600 uppercase tracking-widest leading-none">{u.role === Role.LEADER ? 'RESP. MANTO.' : u.role}</span></div></div><div className="flex flex-col gap-2 text-right"><span className="text-[9px] font-bold text-slate-400 uppercase">PIN: ****</span><select className="bg-white border border-slate-100 p-2 rounded-xl text-[9px] font-black uppercase outline-none focus:border-orange-500" value={u.role} onChange={e => updateUserRole(u.id, e.target.value as Role)}><option value={Role.OPERATOR}>OPERARIO</option><option value={Role.LEADER}>RESP. MANTO.</option><option value={Role.MANAGER}>GERENCIA</option></select><button onClick={() => deleteUser(u.id)} className="text-[10px] font-black text-red-400 hover:text-red-600 uppercase flex items-center justify-end gap-1 mt-2"><Trash2 className="w-3 h-3" /> Eliminar</button></div></Card>))}</div></div>)}
-
-      {/* NUEVO PANEL: CONFIGURACIÓN CHECKLIST */}
-      {activePanel === 'CONFIG' && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 animate-in fade-in duration-300">
-            <Card className="lg:col-span-1 border-orange-200 bg-orange-50/10">
-                <form onSubmit={addChecklistItem} className="space-y-6">
-                    <h3 className="text-2xl font-black text-slate-800 uppercase tracking-tighter flex items-center gap-3"><ListChecks className="text-orange-600" /> Nueva Tarea</h3>
-                    <input className="w-full p-5 rounded-2xl border-2 border-slate-100 font-bold outline-none focus:border-orange-500 transition-all shadow-inner" placeholder="Ej: Verificar Aceite" value={newItemText} onChange={e => setNewItemText(e.target.value)} required />
-                    
-                    <div className="space-y-2">
-                        <label className="text-[10px] font-black uppercase text-slate-400 ml-2">Aplica a:</label>
-                        <select className="w-full p-5 rounded-2xl border-2 border-slate-100 font-bold outline-none focus:border-orange-500 cursor-pointer shadow-inner" value={newItemTarget} onChange={(e: any) => setNewItemTarget(e.target.value)}>
-                            <option value="ALL">Todo (Global)</option>
-                            <option value="MAQUINA">Solo Máquinas</option>
-                            <option value="VEHICULO">Solo Vehículos</option>
-                            <option value="MONTACARGA">Solo Montacargas</option>
-                        </select>
-                    </div>
-
-                    <div className="space-y-2">
-                        <label className="text-[10px] font-black uppercase text-slate-400 ml-2">Responsable de la Tarea</label>
-                        <select className="w-full p-5 rounded-2xl border-2 border-slate-100 font-bold outline-none focus:border-orange-500 cursor-pointer shadow-inner" value={newItemRole} onChange={e => setNewItemRole(e.target.value as Role)}>
-                            <option value={Role.OPERATOR}>OPERARIO (Manto. Autónomo)</option>
-                            <option value={Role.LEADER}>LIDER (Manto. Preventivo)</option>
-                        </select>
-                    </div>
-                    <IndustrialButton fullWidth type="submit">Agregar al Checklist Global</IndustrialButton>
-                </form>
-            </Card>
-            <div className="lg:col-span-2">
-                <Card>
-                    <h3 className="text-xl font-black uppercase text-slate-700 border-b pb-6 mb-8">Listado de Tareas Globales</h3>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        {checklistItems.map(item => (
-                            <div key={item.id} className="flex justify-between items-center p-4 bg-slate-50 rounded-2xl border border-slate-100">
-                                <div>
-                                    <p className="font-bold text-slate-800 text-sm">{item.label}</p>
-                                    <div className="flex gap-2 mt-1">
-                                        <span className={`text-[9px] font-black uppercase tracking-widest ${item.roleTarget === Role.LEADER ? 'text-amber-600' : 'text-orange-600'}`}>
-                                            {item.roleTarget === Role.LEADER ? 'Líderes' : 'Operarios'}
-                                        </span>
-                                        <span className="text-[9px] font-black uppercase tracking-widest text-slate-400">| {item.targetType || 'ALL'}</span>
-                                    </div>
-                                </div>
-                                <button onClick={() => deleteChecklistItem(item.id)} className="p-2 text-slate-300 hover:text-red-500 transition-colors"><Trash2 className="w-4 h-4" /></button>
-                            </div>
-                        ))}
-                    </div>
-                </Card>
-            </div>
-        </div>
-      )}
-    </div>
-  );
-};
+      {!isSupervisor && activePanel === 'MACHINES' && (<div className="grid grid-cols-1 gap-12"><Card><form onSubmit={handleMachineSubmit} className="space-y-6"><h3 className="text-2xl font-black text-slate-800 uppercase tracking-tighter flex items-center gap-3"><Plus className="text-orange-600" /> {editingMachineId ? 'Actualizar Activo' : 'Registro de Activo'}</h3><div className="space-y-2"><label className="text-[10px] font-black uppercase text-slate-400 ml-2">Nombre Técnico</label><input required className="w-full p-5 rounded-2xl border-2 border-slate-100 font-bold outline-none focus:border-orange-500 transition-all shadow-inner" placeholder="Prensa Hidráulica X-10" value={machineForm.name} onChange={e => setMachineForm({...machineForm, name: e.target.value})} /></div><div className="space-y-2"><label className="text-[10px] font-black uppercase text-slate-400 ml-2">Estado del Activo</label><select className="w-full p-5 rounded-2xl border-2 border-slate-100 font-bold outline-none focus:border-orange-500 transition-all shadow-inner" value={machineForm.status || 'ACTIVE'} onChange={(e: any) => setMachineForm({...machineForm, status: e.target.value})}><option value="ACTIVE">🟢 EN PRODUCCIÓN (Activa)</option><option value="STOPPED">🔴 FUERA DE SERVICIO (Parada)</option></select></div><div className="space-y-2"><label className="text-[10px] font-black uppercase text-slate-400 ml-2">Tipo de Activo</label><select className="w-full p-5 rounded-2xl border-2 border-slate-100 font-bold outline-none focus:border-orange-500 transition-all shadow-inner" value={machineForm.assetType} onChange={(e: any) => setMachineForm({...machineForm, assetType: e.target.value})}><option value="MAQUINA">MÁQUINA</option><option value="VEHICULO">VEHÍCULO</option><option value="MONTACARGA">MONTACARGA</option></select></div><div className="space-y-2"><label className="text-[10px] font-black uppercase text-slate-400 ml-2">Fecha Base / Último Manto</label><input type="date" required className="w-full p-5 rounded-2xl border-2 border-slate-100 font-bold outline-none focus:border-orange-500 transition-all shadow-inner" value={machineForm.baseDate} onChange={e => setMachineForm({...machineForm, baseDate: e.target.value})} /></div><div className="p-4 bg-white rounded-2xl border border-slate-200 space-y-4"><p className="text-xs font-black text-orange-600 uppercase">Manto. Operario (Ligero)</p><div className="space-y-2"><label className="text-[10px] font-black uppercase text-slate-400 ml-2">Asignar a:</label><select className="w-full p-3 rounded-xl border border-slate-200 text-sm font-bold" value={machineForm.operatorId} onChange={e => setMachineForm({...machineForm, operatorId: e.target.value})}><option value="">-- Sin Asignar (Pool/Rotativo) --</option>{users.filter(u => u.role === Role.OPERATOR).map(u => <option key={u.id} value={u.id}>{u.name}</option>)}</select></div><div className="space-y-2"><label className="text-[10px] font-black uppercase text-slate-400 ml-2">Frecuencia (Días)</label><input type="number" required className="w-full p-3 rounded-xl border border-slate-200 text-sm font-bold" value={machineForm.operatorInterval} onChange={e => setMachineForm({...machineForm, operatorInterval: parseInt(e.target.value)})} /></div></div><div className="p-4 bg-white rounded-2xl border border-slate-200 space-y-4"><p className="text-xs font-black text-amber-600 uppercase">Manto. Líder (Pesado)</p><div className="space-y-2"><label className="text-[10px] font-black uppercase text-slate-400 ml-2">Asignar a:</label><select className="w-full p-3 rounded-xl border border-slate-200 text-sm font-bold" value={machineForm.leaderId} onChange={e => setMachineForm({...machineForm, leaderId: e.target.value})}><option value="">-- Sin Asignar --</option>{users.filter(u => u.role === Role.LEADER).map(u => <option key={u.id} value={u.id}>{u.name}</option>)}</select></div><div className="space-y-2"><label className="text-[10px] font-black uppercase text-slate-400 ml-2">Frecuencia (Días)</label><input type="number" required className="w-full p-3 rounded-xl border border-slate-200 text-sm font-bold" value={machineForm.leaderInterval} onChange={e => setMachineForm({...machineForm, leaderInterval: parseInt(e.target.value)})} /></div></div><div className="flex gap-2"><IndustrialButton fullWidth type="submit">{editingMachineId ? 'Guardar Cambios' : 'Dar de Alta'}</IndustrialButton>{editingMachineId && <button type="button" onClick={() => { setEditingMachineId(null); setMachineForm({ name: '', operatorInterval: 15, leaderInterval: 30, operatorId: '', leaderId: '', baseDate: new Date().toISOString().slice(0, 10), assetType: 'MAQUINA', status: 'ACTIVE' } as any); }} className="px-4 font-bold text-slate-400 hover:text-red-500">Cancelar</button>}</div></form></Card><div className="lg:col-span-2"><Card className="p-0 overflow-hidden"><div className="flex items-center gap-2 p-4 bg-slate-100 border-b border-slate-200"><Search className="w-4 h-4 text-slate-400"/><input className="bg-transparent outline-none text-sm font-bold text-slate-700 w-full" placeholder="Buscar activo..." value={machineSearch} onChange={e => setMachineSearch(e.target.value)} /></div><table className="w-full text-left border-collapse"><thead className="bg-slate-900 text-white text-[10px] font-black uppercase tracking-widest"><tr><th className="p-6">Máquina</th><th className="p-6 text-center">Estado</th><th className="p-6 text-center">Ciclos</th><th className="p-6 text-right">Acciones</th></tr></thead><tbody className="text-xs font-bold text-slate-600">{visibleMachinesInList.map(m => (<tr key={m.id} className={`border-b border-slate-100 hover:bg-slate-50 transition-colors ${m.status === 'STOPPED' ? 'opacity-50 bg-slate-50' : ''}`}><td className="p-6 text-slate-900 uppercase font-black tracking-tight flex items-center gap-2">{m.status === 'STOPPED' && <PauseCircle className="w-4 h-4 text-red-400"/>} {m.name}</td><td className="p-6 text-center"><span className={`text-[9px] px-2 py-1 rounded uppercase font-black ${m.status === 'STOPPED' ? 'bg-red-100 text-red-600' : 'bg-emerald-100 text-emerald-600'}`}>{m.status === 'STOPPED' ? 'PARADA' : 'ACTIVA'}</span></td><td className="p-6 text-center"><div className="flex flex-col items-center gap-1"><span className="text-orange-600">Op: {m.operatorInterval}d</span><span className="text-amber-700">Líd: {m.leaderInterval}d</span></div></td><td className="p-6 text-right"><div className="flex items-center justify-end gap-3"><button onClick={() => handleEditMachine(m)} className="text-blue-400 hover:text-blue-600 transition-colors"><Pencil className="w-4 h-4" /></button><button onClick={() => handleDeleteMachine(m.id)} className="text-red-400 hover:text-red-600 transition-colors"><Trash2 className="w-4 h-4" /></button></div></td></tr>))}</tbody></table></Card></div></div>)}
+      {!isSupervisor && activePanel === 'USERS' && (<div className="grid grid-cols-1 gap-12"><Card><form onSubmit={addUser} className="space-y-6"><h3 className="text-2xl font-black text-slate-800 uppercase tracking-tighter">Nuevo Usuario</h3><input className="w-full p-5 rounded-2xl border-2" placeholder="Nombre" value={userForm.name} onChange={e => setUserForm({...userForm, name: e.target.value})} /><input className="w-full p-5 rounded-2xl border-2" placeholder="PIN" value={userForm.pin} onChange={e => setUserForm({...userForm, pin: e.target.value})} /><select className="w-full p-5 rounded-2xl border-2" value={userForm.role} onChange={(e:any) => setUserForm({...userForm, role: e.target.value})}><option value={Role.OPERATOR}>OPERARIO DE LÍNEA</option><option value={Role.LEADER}>RESP. MANTENIMIENTO GRAL.</option><option value={Role.MANAGER}>GERENCIA Y AUDITORÍA</option></select><IndustrialButton fullWidth type="submit">Crear</IndustrialButton></form></Card><div className="grid gap-4">{users.map((u:any) => (<Card key={u.id} className="flex justify-between"><span>{u.name} ({u.role})</span><button onClick={() => deleteUser(u.id)}><Trash2 className="text-red-500 w-4 h-4"/></button></Card>))}</div></div>)}
+      {!isSupervisor && activePanel === 'CONFIG' && (<div className="grid grid-cols-1 gap-8"><Card><form onSubmit={addChecklistItem} className="space-y-6"><h3 className="text-2xl font-black">Nueva Tarea Checklist</h3><input className="w-full p-5 rounded-2xl border-2" placeholder="Tarea" value={newItemText} onChange={e => setNewItemText(e.target.value)} /><select className="w-full p-5 rounded-2xl border-2" value={newItemTarget} onChange={(e:any) => setNewItemTarget(e.target.value)}><option value="ALL">Todo</option><option value="MAQUINA">Máquina</option><option value="VEHICULO">Vehículo</option><option value="MONTACARGA">Montacarga</option></select><IndustrialButton fullWidth type="submit">Agregar</IndustrialButton></form></Card><div className="space-y-2">{checklistItems.map((i:any) => (<div key={i.id} className="flex justify-between p-4 bg-white border rounded-xl"><span>{i.label} ({i.targetType})</span><button onClick={() => deleteChecklistItem(i.id)}><Trash2 className="w-4 h-4 text-red-500"/></button></div>))}</div></div>)}
+    </div>
+  );
+}
